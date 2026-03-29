@@ -296,7 +296,7 @@ def self_play_episode(server: InferenceServer, sims: int, temp_horizon: int = 40
         move_num += 1
 
     # 3b: TD-lambda value targets: z_t = gamma^(T-1-t) * z_final
-    gamma = 0.99
+    gamma = CFG["TD_GAMMA"]
     winner = game.winner
     T = len(positions)
     training_data = []
@@ -333,7 +333,7 @@ def self_play_episode(server: InferenceServer, sims: int, temp_horizon: int = 40
             "z": z,
         })
 
-    all_moves = [pos[3] for pos in positions]  # chosen move per turn
+    all_moves = list(game.move_history)  # ALL placements (net + adversary)
     return training_data, winner, all_moves
 
 
@@ -614,12 +614,14 @@ def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20, tune_mode:
             adv = eisenstein_adv if (g_idx % 5 == 0) else None
             # 2b: KataGo playout cap — per-game sims budget
             game_sims = _cap_sims(cur_sims)
-            data, winner, moves = self_play_episode(server, game_sims, adversary=adv)
+            data, winner, moves = self_play_episode(server, game_sims,
+                                                     temp_horizon=CFG["TEMP_HORIZON"],
+                                                     adversary=adv)
             dur = time.perf_counter() - t0
             return g_idx, data, winner, moves, dur, game_sims
 
         # 3a: Overlapped self-play + training
-        WEIGHT_SYNC_BATCHES = 20
+        WEIGHT_SYNC_BATCHES = CFG["WEIGHT_SYNC_BATCHES"]
         losses, entropies = [], []
         batches_since_sync = 0
         workers = min(NUM_WORKERS, games_per_gen)
