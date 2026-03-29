@@ -41,6 +41,7 @@ from inference import InferenceServer, evict_stale_cache
 from mcts import Node, _backprop
 from net import HexNet, encode_board, encode_move, DEVICE, param_count, d6_augment_sample
 from elo import ELO, NetAgent, MCTSAgent, EisensteinGreedyAgent, run_match
+from config import CFG
 
 _CUDA = "cuda" in str(DEVICE)
 
@@ -121,21 +122,18 @@ REPLAY_DIR = Path("replays")
 REPLAY_DIR.mkdir(exist_ok=True)
 
 BUFFER_CAP    = 50_000
-BATCH_SIZE    = 64      # Reduced because each batch item now includes all legal moves
-LR            = 1e-3
-WEIGHT_DECAY  = 1e-4
 EVAL_GAMES    = 10
 NUM_WORKERS   = 8       # 1a: increased from 4 — more concurrent games fill the batch
 INF_BATCH     = 8       # 1a: inference server max batch size (match NUM_WORKERS)
 INF_TIMEOUT   = 30      # 1a: ms to wait for a full batch (was 5ms — too short for MCTS think time)
 
-SIMS_MIN      = 25      # minimum sims for reduced-budget games
-ZOI_MARGIN    = 3       # hex-distance ZOI pruning margin
-
-# 2b: Playout cap randomization (KataGo) — replaces linear sims ramp
-#   25% of games use full sims budget, 75% use SIMS_MIN
-#   More training-efficient than a fixed schedule; no tuning needed.
-CAP_FULL_FRAC = 0.25    # fraction of games at full sim budget
+# Tunable via config.py (autotune)
+BATCH_SIZE    = CFG["BATCH_SIZE"]
+LR            = CFG["LR"]
+WEIGHT_DECAY  = CFG["WEIGHT_DECAY"]
+SIMS_MIN      = CFG["SIMS_MIN"]
+ZOI_MARGIN    = CFG["ZOI_MARGIN"]
+CAP_FULL_FRAC = CFG["CAP_FULL_FRAC"]
 
 # 2c: Checkpoint tournament
 TOURNEY_THRESHOLD = 0.55
@@ -144,8 +142,12 @@ TOURNEY_GAMES_K   = 4
 
 
 def _cap_sims(target: int) -> int:
-    """2b: KataGo playout cap randomization — 25% full, 75% reduced (SIMS_MIN)."""
-    return target if random.random() < CAP_FULL_FRAC else max(SIMS_MIN, target // 8)
+    """2b: KataGo playout cap randomization — 25% full, 75% reduced budget."""
+    if random.random() < CAP_FULL_FRAC:
+        return target
+    # 75% use reduced budget: max(SIMS_MIN, target // 8) but never more than target
+    reduced = max(SIMS_MIN, target // 8)
+    return min(target, reduced)
 
 
 # ── Game recording ───────────────────────────────────────────────────────────
@@ -185,9 +187,10 @@ def mcts_policy(game: HexGame, server: InferenceServer, sims: int,
         root.parent = None  # detach from old tree
         moves = [c.move for c in root.children]
         # Re-apply Dirichlet noise at new root for continued exploration
-        noise = np.random.dirichlet([0.3] * len(moves))
+        _da, _de = CFG["DIRICHLET_ALPHA"], CFG["DIRICHLET_EPS"]
+        noise = np.random.dirichlet([_da] * len(moves))
         for c, n in zip(root.children, noise):
-            c.prior = 0.75 * c.prior + 0.25 * float(n)
+            c.prior = (1 - _de) * c.prior + _de * float(n)
     else:
         root = Node(player=game.current_player)
         value, policy = server.evaluate(game)
@@ -199,8 +202,9 @@ def mcts_policy(game: HexGame, server: InferenceServer, sims: int,
         logits -= logits.max()
         priors = np.exp(logits); priors /= priors.sum()
 
-        noise = np.random.dirichlet([0.3] * len(moves))
-        priors = 0.75 * priors + 0.25 * noise
+        _da, _de = CFG["DIRICHLET_ALPHA"], CFG["DIRICHLET_EPS"]
+        noise = np.random.dirichlet([_da] * len(moves))
+        priors = (1 - _de) * priors + _de * noise
         root.children = [Node(move=m, parent=root, prior=float(p), player=game.current_player)
                          for m, p in zip(moves, priors)]
 
@@ -267,7 +271,9 @@ def self_play_episode(server: InferenceServer, sims: int, temp_horizon: int = 40
         # Adversary's turn: let it play without collecting training data
         if adversary is not None and game.current_player == adversary_player:
             chosen = adversary.choose_move(game)
-            game.make(*chosen)
+            if chosen is None or not game.make(*chosen):
+                log.warning("Adversary %s returned illegal move %s", adversary.name, chosen)
+                break
             prev_root = None   # can't reuse tree across an adversary move
             move_num += 1
             continue
@@ -283,7 +289,9 @@ def self_play_episode(server: InferenceServer, sims: int, temp_horizon: int = 40
         chosen_idx = moves.index(chosen)
         positions.append((board_arr, oq, or_, chosen, chosen_idx, dist, moves,
                           game.current_player))
-        game.make(*chosen)
+        if not game.make(*chosen):
+            log.warning("MCTS returned illegal move %s", chosen)
+            break
         prev_root = new_root   # 1c: carry subtree to next move
         move_num += 1
 
@@ -362,28 +370,53 @@ def train_batch(net: HexNet, optimizer, scaler, buffer: deque) -> dict:
 
         # Policy loss: cross-entropy against visit distribution for ALL legal moves
         loss_p = torch.tensor(0.0, device=DEVICE)
+        n_p = 0
         for i, item in enumerate(batch):
             oq, or_ = item["oq"], item["or_"]
             moves = item["moves"]
-            probs = torch.tensor(item["probs"], dtype=torch.float32, device=DEVICE)
-            
-            planes = [encode_move(q, r, oq, or_) for q, r in moves]
+            probs_np = item["probs"]
+
+            # Filter moves within the 18x18 window (especially after D6 augmentation)
+            valid_indices = []
+            planes = []
+            for j, (q, r) in enumerate(moves):
+                p = encode_move(q, r, oq, or_)
+                if p is not None:
+                    valid_indices.append(j)
+                    planes.append(p)
+
+            if not planes:
+                continue
+
+            # Sub-sample and re-normalize probabilities for windowed moves
+            probs = torch.tensor(probs_np[valid_indices], dtype=torch.float32, device=DEVICE)
+            s = probs.sum()
+            if s > 1e-6:
+                probs /= s
+            else:
+                probs = torch.ones_like(probs) / len(probs)
+
             move_t = torch.tensor(np.stack(planes), device=DEVICE)       # [N, 1, S, S]
-            
-            feat_i = f[i:i+1].expand(len(moves), -1, -1, -1)
+
+            feat_i = f[i:i+1].expand(len(planes), -1, -1, -1)
             logits = net.policy_logit(feat_i, move_t)                    # [N]
-            
+
             log_preds = F.log_softmax(logits, dim=0)
             loss_p += -(probs * log_preds).sum()
-            
+            n_p += 1
+
             with torch.no_grad():
                 preds = F.softmax(logits, dim=0)
                 item["entropy"] = -(preds * log_preds).sum().item()
 
-        loss_p /= BATCH_SIZE
+        if n_p > 0:
+            loss_p /= n_p
         loss = loss_v + loss_p
-
     # Scaled backpropagation
+    if torch.isnan(loss):
+        log.warning("NaN loss detected! Skipping batch.")
+        return None
+
     scaler.scale(loss).backward()
     scaler.unscale_(optimizer)
     torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
@@ -472,7 +505,8 @@ def load_latest(net: HexNet) -> int:
     path = CHECKPOINT_DIR / "net_latest.pt"
     if path.exists():
         try:
-            net.load_state_dict(torch.load(path, map_location=DEVICE))
+            target = net._orig_mod if hasattr(net, "_orig_mod") else net
+            target.load_state_dict(torch.load(path, map_location=DEVICE))
             log.info("Loaded %s", path)
             nums = [int(p.stem.split("gen")[1]) for p in CHECKPOINT_DIR.glob("net_gen*.pt")]
             return max(nums) if nums else 0
@@ -509,7 +543,9 @@ def _tourney_promote(net: HexNet, gen: int, sims: int, elo: ELO) -> bool:
     for p in pool_paths:
         old_net = HexNet().to(DEVICE)
         try:
-            old_net.load_state_dict(torch.load(p, map_location=DEVICE))
+            # old_net is fresh, no torch.compile yet, but use pattern for safety
+            target = old_net._orig_mod if hasattr(old_net, "_orig_mod") else old_net
+            target.load_state_dict(torch.load(p, map_location=DEVICE))
         except (RuntimeError, KeyError):
             continue  # skip incompatible checkpoint silently
         old_agent = NetAgent(old_net, sims=max(25, sims // 2),
@@ -531,7 +567,7 @@ def _tourney_promote(net: HexNet, gen: int, sims: int, elo: ELO) -> bool:
 
 # ── Main training loop ────────────────────────────────────────────────────────
 
-def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20):
+def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20, tune_mode: bool = False):
     log.info("=== HexGo Training ===")
     log.info("Device=%s  Params=%s  SIMS=%d  GAMES/GEN=%d",
              DEVICE, f"{param_count(HexNet()):,}", sims, games_per_gen)
@@ -630,7 +666,9 @@ def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20):
                     if batches_since_sync >= WEIGHT_SYNC_BATCHES:
                         sd = (net._orig_mod.state_dict()
                               if hasattr(net, "_orig_mod") else net.state_dict())
-                        server.net.load_state_dict(sd)
+                        # Load into _orig_mod if server.net is compiled
+                        target = server.net._orig_mod if hasattr(server.net, "_orig_mod") else server.net
+                        target.load_state_dict(sd)
                         batches_since_sync = 0
 
         perf.stop("self_play")
@@ -665,34 +703,36 @@ def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20):
         save(net, gen)
         perf.stop("checkpoint")
 
-        # 2c: Checkpoint tournament
+        # 2c: Checkpoint tournament (skipped in tune mode)
         perf.start("tournament")
-        if not _tourney_promote(net, gen, cur_sims, elo):
-            prev_best = sorted(CHECKPOINT_DIR.glob("net_gen*.pt"))
-            prev_best = [p for p in prev_best if f"gen{gen:04d}" not in p.stem]
-            if prev_best:
-                try:
-                    net.load_state_dict(torch.load(prev_best[-1], map_location=DEVICE))
-                    log.info("  Reverted to %s as training policy", prev_best[-1].name)
-                except (RuntimeError, KeyError):
-                    pass
+        if not tune_mode:
+            if not _tourney_promote(net, gen, cur_sims, elo):
+                prev_best = sorted(CHECKPOINT_DIR.glob("net_gen*.pt"))
+                prev_best = [p for p in prev_best if f"gen{gen:04d}" not in p.stem]
+                if prev_best:
+                    try:
+                        target = net._orig_mod if hasattr(net, "_orig_mod") else net
+                        target.load_state_dict(torch.load(prev_best[-1], map_location=DEVICE))
+                        log.info("  Reverted to %s as training policy", prev_best[-1].name)
+                    except (RuntimeError, KeyError):
+                        pass
         perf.stop("tournament")
 
         # ELO evaluation
         perf.start("eval")
-        baseline  = MCTSAgent(sims=50)
         net_agent = NetAgent(net, sims=max(25, sims // 2), name=f"net_gen{gen:04d}")
-        match     = run_match(net_agent, baseline, n_games=EVAL_GAMES, elo=elo, verbose=False)
-        net_wins  = match.get(f"wins_{net_agent.name}", 0)
-        log.info("  ELO eval vs mcts_50: win_rate=%.2f  ELO=%s",
-                 net_wins / EVAL_GAMES, elo.leaderboard()[:3])
+        if not tune_mode:
+            baseline  = MCTSAgent(sims=50)
+            match     = run_match(net_agent, baseline, n_games=EVAL_GAMES, elo=elo, verbose=False)
+            net_wins  = match.get(f"wins_{net_agent.name}", 0)
+            log.info("  ELO eval vs mcts_50: win_rate=%.2f  ELO=%s",
+                     net_wins / EVAL_GAMES, elo.leaderboard()[:3])
 
         eis_agent = EisensteinGreedyAgent(name="eisenstein_def", defensive=True)
-        eis_match = run_match(net_agent, eis_agent, n_games=EVAL_GAMES // 2,
-                              elo=elo, verbose=False)
+        eis_n     = EVAL_GAMES // 2
+        eis_match = run_match(net_agent, eis_agent, n_games=eis_n, elo=elo, verbose=False)
         eis_wins  = eis_match.get(f"wins_{net_agent.name}", 0)
-        log.info("  ELO eval vs eisenstein_def: win_rate=%.2f",
-                 eis_wins / (EVAL_GAMES // 2))
+        log.info("  ELO eval vs eisenstein_def: win_rate=%.2f", eis_wins / eis_n)
         perf.stop("eval")
 
         # Policy heatmap
@@ -702,6 +742,26 @@ def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20):
         save_heatmap(heatmap_server, gen)
         heatmap_server.stop()
         perf.stop("heatmap")
+
+        # Write per-gen result for tune.py to consume
+        if tune_mode:
+            tune_result_path = Path("tune_result.json")
+            existing = []
+            if tune_result_path.exists():
+                try:
+                    existing = json.loads(tune_result_path.read_text())
+                except Exception:
+                    existing = []
+            avg_loss = sum(losses) / len(losses) if losses else None
+            avg_ent  = sum(entropies) / len(entropies) if entropies else None
+            existing.append({
+                "gen":         gen,
+                "eis_winrate": round(eis_wins / eis_n, 3),
+                "avg_loss":    round(avg_loss, 4) if avg_loss is not None else None,
+                "avg_ent":     round(avg_ent,  4) if avg_ent  is not None else None,
+                "gen_time_s":  round(time.perf_counter() - t_gen, 1),
+            })
+            tune_result_path.write_text(json.dumps(existing, indent=2))
 
         # Latency summary + bottleneck warnings
         t_total = time.perf_counter() - t_gen
@@ -718,5 +778,6 @@ if __name__ == "__main__":
     parser.add_argument("--gens",  type=int, default=50,  help="Generations to train")
     parser.add_argument("--sims",  type=int, default=100, help="MCTS sims per move")
     parser.add_argument("--games", type=int, default=20,  help="Self-play games per gen")
+    parser.add_argument("--tune",  action="store_true",   help="Tune mode: greedy-only eval, no tournament, writes tune_result.json")
     args = parser.parse_args()
-    train(n_gens=args.gens, sims=args.sims, games_per_gen=args.games)
+    train(n_gens=args.gens, sims=args.sims, games_per_gen=args.games, tune_mode=args.tune)
