@@ -68,6 +68,22 @@ NUM_WORKERS   = 8       # 1a: increased from 4 — more concurrent games fill th
 INF_BATCH     = 8       # 1a: inference server max batch size (match NUM_WORKERS)
 INF_TIMEOUT   = 30      # 1a: ms to wait for a full batch (was 5ms — too short for MCTS think time)
 
+# 2b: Self-play curriculum — ramp sims from SIMS_MIN to target over SIMS_RAMP_GENS
+SIMS_MIN      = 25
+SIMS_RAMP     = 20      # generations to reach full sims
+
+# 2c: Checkpoint tournament — new net must win this fraction of pool games to become training policy
+TOURNEY_THRESHOLD = 0.55
+TOURNEY_POOL_K    = 3   # how many recent checkpoints to include in pool
+TOURNEY_GAMES_K   = 4   # games per pool opponent
+
+
+def _curriculum_sims(gen: int, target: int) -> int:
+    """2b: linearly ramp from SIMS_MIN to target over SIMS_RAMP generations."""
+    if gen >= SIMS_RAMP:
+        return target
+    return max(SIMS_MIN, int(SIMS_MIN + (target - SIMS_MIN) * gen / SIMS_RAMP))
+
 
 # ── Game recording ───────────────────────────────────────────────────────────
 
@@ -404,6 +420,48 @@ def load_latest(net: HexNet) -> int:
     return 0
 
 
+# ── Checkpoint tournament ────────────────────────────────────────────────────
+
+def _tourney_promote(net: HexNet, gen: int, sims: int, elo: ELO) -> bool:
+    """
+    2c: Run new net against top-K recent checkpoints.
+    Returns True (and saves net_latest.pt) if win_rate >= TOURNEY_THRESHOLD.
+    On gen<=1 or no pool available, always promotes.
+    """
+    pool_paths = sorted(CHECKPOINT_DIR.glob("net_gen*.pt"))
+    # Exclude the checkpoint we just saved (current gen)
+    pool_paths = [p for p in pool_paths if f"gen{gen:04d}" not in p.stem]
+    pool_paths = pool_paths[-TOURNEY_POOL_K:]  # most recent K
+
+    if not pool_paths:
+        return True  # no pool yet → auto-promote
+
+    wins, total = 0, 0
+    net_agent = NetAgent(net, sims=max(25, sims // 2), name=f"net_gen{gen:04d}")
+
+    for p in pool_paths:
+        old_net = HexNet().to(DEVICE)
+        try:
+            old_net.load_state_dict(torch.load(p, map_location=DEVICE))
+        except (RuntimeError, KeyError):
+            continue  # skip incompatible checkpoint silently
+        old_agent = NetAgent(old_net, sims=max(25, sims // 2),
+                             name=f"pool_{p.stem}")
+        result = run_match(net_agent, old_agent, n_games=TOURNEY_GAMES_K,
+                           elo=elo, verbose=False)
+        wins  += result.get(f"wins_{net_agent.name}", 0)
+        total += TOURNEY_GAMES_K
+
+    if total == 0:
+        return True
+
+    win_rate = wins / total
+    log.info("  Tournament: %d/%d (%.0f%%) vs pool of %d — %s",
+             wins, total, 100 * win_rate, len(pool_paths),
+             "PROMOTED" if win_rate >= TOURNEY_THRESHOLD else "held")
+    return win_rate >= TOURNEY_THRESHOLD
+
+
 # ── Main training loop ────────────────────────────────────────────────────────
 
 def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20):
@@ -419,9 +477,15 @@ def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20):
     elo = ELO()
     buffer: deque = deque(maxlen=BUFFER_CAP)
 
+    # 2b: per-gen position hash set for Zobrist-style dedup (cleared each gen)
+    gen_hashes: set[int] = set()
+
     for gen in range(start_gen + 1, start_gen + n_gens + 1):
         log.info("--- Generation %d ---", gen)
         t_gen = time.perf_counter()
+
+        # 2b: curriculum sims — ramp from SIMS_MIN to target over first SIMS_RAMP gens
+        cur_sims = _curriculum_sims(gen - start_gen, sims)
 
         # Start inference server for this generation
         server = InferenceServer(net, batch_size=INF_BATCH, timeout_ms=INF_TIMEOUT)
@@ -433,13 +497,15 @@ def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20):
         eisenstein_adv = EisensteinGreedyAgent(name="eisenstein_def", defensive=True)
         game_wins = {1: 0, 2: 0, None: 0}
         total_positions = 0
+        deduped = 0
         last_moves, last_winner = [], None
         first_saved = False
+        gen_hashes.clear()  # 2a: reset per-gen dedup set
 
         def run_one_game(g_idx):
             t0 = time.perf_counter()
             adv = eisenstein_adv if (g_idx % 5 == 0) else None
-            data, winner, moves = self_play_episode(server, sims, adversary=adv)
+            data, winner, moves = self_play_episode(server, cur_sims, adversary=adv)
             dur = time.perf_counter() - t0
             return g_idx, data, winner, moves, dur
 
@@ -448,20 +514,28 @@ def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20):
             futs = [pool.submit(run_one_game, g) for g in range(games_per_gen)]
             for fut in concurrent.futures.as_completed(futs):
                 g_idx, data, winner, moves, dur = fut.result()
-                buffer.extend(data)
-                total_positions += len(data)
+                # 2a: Zobrist-style dedup — skip positions already seen this gen
+                for item in data:
+                    h = hash(item["board"].tobytes())
+                    if h not in gen_hashes:
+                        gen_hashes.add(h)
+                        buffer.append(item)
+                        total_positions += 1
+                    else:
+                        deduped += 1
                 game_wins[winner] += 1
                 last_moves, last_winner = moves, winner
                 log.info("  SP G%02d winner=%s moves=%d dur=%.1fs buffer=%d "
-                         "avg_batch=%.1f",
+                         "avg_batch=%.1f sims=%d",
                          g_idx + 1, winner, len(moves), dur, len(buffer),
-                         server.avg_batch_size)
+                         server.avg_batch_size, cur_sims)
                 if not first_saved and gen == start_gen + 1:
                     save_replay(moves, winner, gen, "first")
                     first_saved = True
 
         server.stop()
         save_replay(last_moves, last_winner, gen, "last")
+        log.info("  Dedup: skipped %d duplicate positions", deduped)
 
         log.info("  Self-play done: X=%d O=%d draw=%d  total_pos=%d  hits=%d",
                  game_wins[1], game_wins[2], game_wins[None], total_positions,
@@ -483,8 +557,20 @@ def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20):
         else:
             log.info("  Buffer too small to train (%d < %d)", len(buffer), BATCH_SIZE)
 
-        # Checkpoint
+        # Checkpoint — save generation file unconditionally
         save(net, gen)
+
+        # 2c: Checkpoint tournament — only update net_latest.pt if new net wins pool
+        if not _tourney_promote(net, gen, cur_sims, elo):
+            # Reload the previous best net as training policy for next gen
+            prev_best = sorted(CHECKPOINT_DIR.glob("net_gen*.pt"))
+            prev_best = [p for p in prev_best if f"gen{gen:04d}" not in p.stem]
+            if prev_best:
+                try:
+                    net.load_state_dict(torch.load(prev_best[-1], map_location=DEVICE))
+                    log.info("  Reverted to %s as training policy", prev_best[-1].name)
+                except (RuntimeError, KeyError):
+                    pass  # keep current net if load fails
 
         # ELO evaluation vs mcts_50
         baseline  = MCTSAgent(sims=50)
@@ -503,8 +589,11 @@ def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20):
         log.info("  ELO eval vs eisenstein_def: win_rate=%.2f",
                  eis_wins / (EVAL_GAMES // 2))
 
-        # Policy heatmap — watch what the net discovers without being told
-        save_heatmap(server, gen)
+        # Policy heatmap — create a fresh one-shot server (net is already trained this gen)
+        heatmap_server = InferenceServer(net, batch_size=1, timeout_ms=100)
+        heatmap_server.start()
+        save_heatmap(heatmap_server, gen)
+        heatmap_server.stop()
 
         log.info("  Generation %d done in %.1fs", gen, time.perf_counter() - t_gen)
 

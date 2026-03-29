@@ -187,11 +187,11 @@ early exit from value head. Low priority until scale experiments run.
 | ✅ 10    | D6 augmentation (1j)             | done   | Up to 12× sample efficiency    |
 | ✅ 11    | EisensteinGreedyAgent (1k)       | done   | Structured curriculum adversary|
 | ✅ 12    | Policy heatmap (1l)              | done   | Scientific instrument          |
-| 13       | Zobrist buffer dedup (2a)        | 2hr    | Better replay diversity        |
-| 14       | Checkpoint tournament (2c)       | 3hr    | Stable training policy         |
+| ✅ 13    | Zobrist buffer dedup (2a)        | done   | Better replay diversity        |
+| ✅ 14    | Checkpoint tournament (2c)       | done   | Stable training policy         |
 | 15       | Async self-play (3a)             | 4hr    | Continuous training            |
 | 16       | CUDA Graphs (3c)                 | 3hr    | 30-50% inference speedup       |
-| 17       | Self-play curriculum (2b)        | 1hr    | Faster early exploration       |
+| ✅ 17    | Self-play curriculum (2b)        | done   | Faster early exploration       |
 | 18       | G-CNN full equivariance (4a)     | 1wk    | Principled symmetry            |
 | 19       | CA weight init (4b)              | 2hr    | Z[ω]-aligned priors            |
 | 20       | Scale trunk 4blk/64ch (5a)       | 2hr    | Capacity for harder games      |
