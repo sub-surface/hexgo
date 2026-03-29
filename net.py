@@ -238,9 +238,37 @@ class ResBlock(nn.Module):
         return F.relu(x + r)
 
 
+class GlobalPoolBranch(nn.Module):
+    """
+    KataGo-style global pooling branch.
+
+    After the residual trunk, concatenate board-wide average and max pooling
+    features and project them back to the spatial feature map. This gives
+    every cell awareness of the global game state (total material, threat density,
+    board extent) at essentially zero extra compute.
+
+    Architecture:
+        x [B, C, H, W] → avg_pool → [B, C]  ─┐
+                        → max_pool → [B, C]  ─┼→ FC(2C→C) → broadcast → x + g
+    """
+    def __init__(self, ch: int):
+        super().__init__()
+        self.fc = nn.Sequential(
+            nn.Linear(ch * 2, ch),
+            nn.ReLU(),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        avg = x.mean(dim=(2, 3))                          # [B, C]
+        mx  = x.amax(dim=(2, 3))                          # [B, C]
+        g   = self.fc(torch.cat([avg, mx], dim=1))        # [B, C]
+        g   = g.unsqueeze(-1).unsqueeze(-1).expand_as(x)  # [B, C, H, W]
+        return x + g                                       # residual broadcast
+
+
 class HexNet(nn.Module):
     """
-    Shared trunk: IN_CH → hidden conv → n_blocks residual blocks
+    Shared trunk: IN_CH → hidden conv → n_blocks residual blocks → global pool
     Value head:   trunk → conv 1×1 → flatten → FC → tanh scalar
     Policy head:  (trunk_features, move_plane) → conv 1×1 → flatten → FC → scalar
     """
@@ -248,7 +276,7 @@ class HexNet(nn.Module):
         super().__init__()
         self.hidden = hidden
         self.n_blocks = n_blocks
-        
+
         # Trunk
         self.stem = nn.Sequential(
             nn.Conv2d(IN_CH, hidden, 3, padding=1, bias=False),
@@ -256,6 +284,8 @@ class HexNet(nn.Module):
             nn.ReLU(),
         )
         self.blocks = nn.Sequential(*[ResBlock(hidden) for _ in range(n_blocks)])
+        # KataGo global pool: gives each cell global board awareness (threat density etc.)
+        self.global_pool = GlobalPoolBranch(hidden)
 
         # Value head
         self.v_conv = nn.Sequential(
@@ -285,7 +315,7 @@ class HexNet(nn.Module):
         )
 
     def trunk(self, x: torch.Tensor) -> torch.Tensor:
-        return self.blocks(self.stem(x))
+        return self.global_pool(self.blocks(self.stem(x)))
 
     def value(self, features: torch.Tensor) -> torch.Tensor:
         v = self.v_conv(features).flatten(1)

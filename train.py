@@ -37,10 +37,71 @@ import torch.nn.functional as F
 from torch import optim
 
 from game import HexGame
-from inference import InferenceServer
+from inference import InferenceServer, evict_stale_cache
 from mcts import Node, _backprop
 from net import HexNet, encode_board, encode_move, DEVICE, param_count, d6_augment_sample
 from elo import ELO, NetAgent, MCTSAgent, EisensteinGreedyAgent, run_match
+
+_CUDA = "cuda" in str(DEVICE)
+
+
+# ── Latency / performance tracker ────────────────────────────────────────────
+
+class PerfTracker:
+    """
+    Lightweight per-generation timing tracker.
+
+    Usage:
+        pt = PerfTracker()
+        pt.start("self_play")
+        ...
+        pt.stop("self_play")
+        log.info(pt.summary(total_time))
+        pt.reset()
+    """
+    def __init__(self):
+        self._times:  dict[str, float] = {}
+        self._counts: dict[str, int]   = {}
+        self._t0:     dict[str, float] = {}
+
+    def start(self, name: str):
+        self._t0[name] = time.perf_counter()
+
+    def stop(self, name: str):
+        elapsed = time.perf_counter() - self._t0.get(name, time.perf_counter())
+        self._times[name]  = self._times.get(name, 0.0) + elapsed
+        self._counts[name] = self._counts.get(name, 0) + 1
+
+    def get(self, name: str) -> float:
+        return self._times.get(name, 0.0)
+
+    def summary(self, total: float) -> str:
+        if total <= 0:
+            return ""
+        parts = []
+        for name, t in sorted(self._times.items(), key=lambda x: -x[1]):
+            pct = 100.0 * t / total
+            n   = self._counts[name]
+            avg = 1000.0 * t / n if n else 0.0
+            parts.append(f"{name}={t:.1f}s({pct:.0f}%,n={n},avg={avg:.0f}ms)")
+        return " | ".join(parts)
+
+    def warnings(self, total: float, avg_batch: float, deduped: int,
+                 new_pos: int) -> list[str]:
+        """Return human-readable bottleneck warnings for logging."""
+        w = []
+        sp_frac = self._times.get("self_play", 0) / max(total, 1)
+        if sp_frac < 0.3 and total > 10:
+            w.append("Training dominates (>70% time) — consider fewer train batches or more workers")
+        if avg_batch < 2.0:
+            w.append(f"Low inference batching (avg={avg_batch:.1f}) — raise INF_TIMEOUT or NUM_WORKERS")
+        dup_rate = deduped / max(deduped + new_pos, 1)
+        if dup_rate > 0.3:
+            w.append(f"High dedup rate ({100*dup_rate:.0f}%) — try larger margin or more diverse exploration")
+        return w
+
+    def reset(self):
+        self._times.clear(); self._counts.clear(); self._t0.clear()
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 logging.basicConfig(
@@ -68,21 +129,23 @@ NUM_WORKERS   = 8       # 1a: increased from 4 — more concurrent games fill th
 INF_BATCH     = 8       # 1a: inference server max batch size (match NUM_WORKERS)
 INF_TIMEOUT   = 30      # 1a: ms to wait for a full batch (was 5ms — too short for MCTS think time)
 
-# 2b: Self-play curriculum — ramp sims from SIMS_MIN to target over SIMS_RAMP_GENS
-SIMS_MIN      = 25
-SIMS_RAMP     = 20      # generations to reach full sims
+SIMS_MIN      = 25      # minimum sims for reduced-budget games
+ZOI_MARGIN    = 3       # hex-distance ZOI pruning margin
 
-# 2c: Checkpoint tournament — new net must win this fraction of pool games to become training policy
+# 2b: Playout cap randomization (KataGo) — replaces linear sims ramp
+#   25% of games use full sims budget, 75% use SIMS_MIN
+#   More training-efficient than a fixed schedule; no tuning needed.
+CAP_FULL_FRAC = 0.25    # fraction of games at full sim budget
+
+# 2c: Checkpoint tournament
 TOURNEY_THRESHOLD = 0.55
-TOURNEY_POOL_K    = 3   # how many recent checkpoints to include in pool
-TOURNEY_GAMES_K   = 4   # games per pool opponent
+TOURNEY_POOL_K    = 3
+TOURNEY_GAMES_K   = 4
 
 
-def _curriculum_sims(gen: int, target: int) -> int:
-    """2b: linearly ramp from SIMS_MIN to target over SIMS_RAMP generations."""
-    if gen >= SIMS_RAMP:
-        return target
-    return max(SIMS_MIN, int(SIMS_MIN + (target - SIMS_MIN) * gen / SIMS_RAMP))
+def _cap_sims(target: int) -> int:
+    """2b: KataGo playout cap randomization — 25% full, 75% reduced (SIMS_MIN)."""
+    return target if random.random() < CAP_FULL_FRAC else max(SIMS_MIN, target // 8)
 
 
 # ── Game recording ───────────────────────────────────────────────────────────
@@ -128,7 +191,7 @@ def mcts_policy(game: HexGame, server: InferenceServer, sims: int,
     else:
         root = Node(player=game.current_player)
         value, policy = server.evaluate(game)
-        moves = game.legal_moves()
+        moves = game.zoi_moves(ZOI_MARGIN)  # ZOI pruning: ~80-90% branch reduction
         if not moves:
             return None, None, [], None
 
@@ -152,12 +215,13 @@ def mcts_policy(game: HexGame, server: InferenceServer, sims: int,
             v = -1.0
         else:
             v, lp = server.evaluate(game)
-            lmoves = game.legal_moves()
+            lmoves = game.zoi_moves(ZOI_MARGIN)
             if lmoves:
                 ll = np.array([lp.get(m, 0.0) for m in lmoves], dtype=np.float32)
                 ll -= ll.max(); lpr = np.exp(ll); lpr /= lpr.sum()
                 node.children = [Node(move=m, parent=node, prior=float(p), player=game.current_player)
                                   for m, p in zip(lmoves, lpr)]
+
         for _ in range(depth):
             game.unmake()
         _backprop(node, v)
@@ -280,10 +344,13 @@ def train_batch(net: HexNet, optimizer, scaler, buffer: deque) -> dict:
     net.train()
 
     # Value loss: standard MSE on outcome
-    boards      = torch.tensor(np.stack([b["board"] for b in batch]),
-                                device=DEVICE)                    # [B,3,S,S]
-    z_targets   = torch.tensor([b["z"] for b in batch],
-                                dtype=torch.float32, device=DEVICE)  # [B]
+    # pin_memory + non_blocking: async host→GPU transfer, overlaps with CPU work
+    boards_np = np.stack([b["board"] for b in batch])
+    boards = (torch.from_numpy(boards_np).pin_memory().to(DEVICE, non_blocking=True)
+              if _CUDA else torch.tensor(boards_np, device=DEVICE))
+    z_np = np.array([b["z"] for b in batch], dtype=np.float32)
+    z_targets = (torch.from_numpy(z_np).pin_memory().to(DEVICE, non_blocking=True)
+                 if _CUDA else torch.tensor(z_np, device=DEVICE))
 
     optimizer.zero_grad()
 
@@ -477,18 +544,22 @@ def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20):
     elo = ELO()
     buffer: deque = deque(maxlen=BUFFER_CAP)
 
-    # 2b: per-gen position hash set for Zobrist-style dedup (cleared each gen)
+    # 2a: per-gen position hash set for dedup (cleared each gen)
     gen_hashes: set[int] = set()
+    perf = PerfTracker()
 
     for gen in range(start_gen + 1, start_gen + n_gens + 1):
         log.info("--- Generation %d ---", gen)
         t_gen = time.perf_counter()
+        perf.reset()
+        # cur_sims is per-game (cap randomization applied inside run_one_game)
+        cur_sims = sims
 
-        # 2b: curriculum sims — ramp from SIMS_MIN to target over first SIMS_RAMP gens
-        cur_sims = _curriculum_sims(gen - start_gen, sims)
+        # Evict stale entries from the persistent cross-gen cache
+        evict_stale_cache(gen)
 
         # Start inference server for this generation
-        server = InferenceServer(net, batch_size=INF_BATCH, timeout_ms=INF_TIMEOUT)
+        server = InferenceServer(net, batch_size=INF_BATCH, timeout_ms=INF_TIMEOUT, gen=gen)
         server.start()
 
         # Parallel self-play — NUM_WORKERS games run concurrently.
@@ -505,29 +576,29 @@ def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20):
         def run_one_game(g_idx):
             t0 = time.perf_counter()
             adv = eisenstein_adv if (g_idx % 5 == 0) else None
-            data, winner, moves = self_play_episode(server, cur_sims, adversary=adv)
+            # 2b: KataGo playout cap — per-game sims budget
+            game_sims = _cap_sims(cur_sims)
+            data, winner, moves = self_play_episode(server, game_sims, adversary=adv)
             dur = time.perf_counter() - t0
-            return g_idx, data, winner, moves, dur
+            return g_idx, data, winner, moves, dur, game_sims
 
-        # 3a: Overlapped self-play + training — train batches fire while games
-        # are still running rather than waiting for all games to finish first.
-        # WEIGHT_SYNC_BATCHES controls how often the SP server gets fresh weights.
+        # 3a: Overlapped self-play + training
         WEIGHT_SYNC_BATCHES = 20
         losses, entropies = [], []
         batches_since_sync = 0
         workers = min(NUM_WORKERS, games_per_gen)
 
+        perf.start("self_play")
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
             pending = {pool.submit(run_one_game, g): g for g in range(games_per_gen)}
 
             while pending:
-                # Drain completed games (non-blocking poll)
                 done, pending = concurrent.futures.wait(
                     pending, timeout=0.05,
                     return_when=concurrent.futures.FIRST_COMPLETED)
 
                 for fut in done:
-                    g_idx, data, winner, moves, dur = fut.result()
+                    g_idx, data, winner, moves, dur, gsims = fut.result()
                     for item in data:
                         h = hash(item["board"].tobytes())
                         if h not in gen_hashes:
@@ -541,40 +612,46 @@ def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20):
                     log.info("  SP G%02d winner=%s moves=%d dur=%.1fs buffer=%d "
                              "avg_batch=%.1f sims=%d",
                              g_idx + 1, winner, len(moves), dur, len(buffer),
-                             server.avg_batch_size, cur_sims)
+                             server.avg_batch_size, gsims)
                     if not first_saved and gen == start_gen + 1:
                         save_replay(moves, winner, gen, "first")
                         first_saved = True
 
                 # Train overlapped with remaining self-play
                 if len(buffer) >= BATCH_SIZE:
+                    perf.start("overlap_train")
                     result = train_batch(net, optimizer, scaler, buffer)
+                    perf.stop("overlap_train")
                     if result:
                         losses.append(result["loss"])
                         entropies.append(result.get("entropy", 0))
                         batches_since_sync += 1
 
-                    # Sync updated weights back to self-play server periodically
                     if batches_since_sync >= WEIGHT_SYNC_BATCHES:
                         sd = (net._orig_mod.state_dict()
                               if hasattr(net, "_orig_mod") else net.state_dict())
                         server.net.load_state_dict(sd)
                         batches_since_sync = 0
 
+        perf.stop("self_play")
         server.stop()
         save_replay(last_moves, last_winner, gen, "last")
         log.info("  Dedup: skipped %d duplicate positions", deduped)
-        log.info("  Self-play done: X=%d O=%d draw=%d  total_pos=%d  hits=%d",
+        log.info("  Self-play done: X=%d O=%d draw=%d  total_pos=%d  "
+                 "hits=%d persistent_hits=%d",
                  game_wins[1], game_wins[2], game_wins[None], total_positions,
-                 server.cache_hits)
+                 server.cache_hits, server.persistent_hits)
+        log.info("  Inference: %s", server.latency_summary())
 
-        # Post-game training: continue for any remaining budget
+        # Post-game training: continue for remaining batch budget
+        perf.start("post_train")
         n_extra = max(0, max(10, total_positions // BATCH_SIZE) - len(losses))
         for _ in range(n_extra):
             result = train_batch(net, optimizer, scaler, buffer)
             if result:
                 losses.append(result["loss"])
                 entropies.append(result.get("entropy", 0))
+        perf.stop("post_train")
 
         if losses:
             log.info("  Train: %d batches  avg_loss=%.4f  avg_ent=%.4f",
@@ -584,11 +661,13 @@ def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20):
             log.info("  Buffer too small to train (%d < %d)", len(buffer), BATCH_SIZE)
 
         # Checkpoint — save generation file unconditionally
+        perf.start("checkpoint")
         save(net, gen)
+        perf.stop("checkpoint")
 
-        # 2c: Checkpoint tournament — only update net_latest.pt if new net wins pool
+        # 2c: Checkpoint tournament
+        perf.start("tournament")
         if not _tourney_promote(net, gen, cur_sims, elo):
-            # Reload the previous best net as training policy for next gen
             prev_best = sorted(CHECKPOINT_DIR.glob("net_gen*.pt"))
             prev_best = [p for p in prev_best if f"gen{gen:04d}" not in p.stem]
             if prev_best:
@@ -596,32 +675,40 @@ def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20):
                     net.load_state_dict(torch.load(prev_best[-1], map_location=DEVICE))
                     log.info("  Reverted to %s as training policy", prev_best[-1].name)
                 except (RuntimeError, KeyError):
-                    pass  # keep current net if load fails
+                    pass
+        perf.stop("tournament")
 
-        # ELO evaluation vs mcts_50
+        # ELO evaluation
+        perf.start("eval")
         baseline  = MCTSAgent(sims=50)
-        net_agent = NetAgent(net, sims=sims // 2, name=f"net_gen{gen:04d}")
-        match = run_match(net_agent, baseline, n_games=EVAL_GAMES, elo=elo, verbose=False)
-        net_wins = match.get(f"wins_{net_agent.name}", 0)
-        win_rate = net_wins / EVAL_GAMES
+        net_agent = NetAgent(net, sims=max(25, sims // 2), name=f"net_gen{gen:04d}")
+        match     = run_match(net_agent, baseline, n_games=EVAL_GAMES, elo=elo, verbose=False)
+        net_wins  = match.get(f"wins_{net_agent.name}", 0)
         log.info("  ELO eval vs mcts_50: win_rate=%.2f  ELO=%s",
-                 win_rate, elo.leaderboard()[:3])
+                 net_wins / EVAL_GAMES, elo.leaderboard()[:3])
 
-        # ELO evaluation vs EisensteinGreedy (defensive) — curriculum baseline
         eis_agent = EisensteinGreedyAgent(name="eisenstein_def", defensive=True)
         eis_match = run_match(net_agent, eis_agent, n_games=EVAL_GAMES // 2,
                               elo=elo, verbose=False)
         eis_wins  = eis_match.get(f"wins_{net_agent.name}", 0)
         log.info("  ELO eval vs eisenstein_def: win_rate=%.2f",
                  eis_wins / (EVAL_GAMES // 2))
+        perf.stop("eval")
 
-        # Policy heatmap — create a fresh one-shot server (net is already trained this gen)
+        # Policy heatmap
+        perf.start("heatmap")
         heatmap_server = InferenceServer(net, batch_size=1, timeout_ms=100)
         heatmap_server.start()
         save_heatmap(heatmap_server, gen)
         heatmap_server.stop()
+        perf.stop("heatmap")
 
-        log.info("  Generation %d done in %.1fs", gen, time.perf_counter() - t_gen)
+        # Latency summary + bottleneck warnings
+        t_total = time.perf_counter() - t_gen
+        log.info("  Perf: %s", perf.summary(t_total))
+        for w in perf.warnings(t_total, server.avg_batch_size, deduped, total_positions):
+            log.warning("  BOTTLENECK: %s", w)
+        log.info("  Generation %d done in %.1fs", gen, t_total)
 
     log.info("Training complete.")
 

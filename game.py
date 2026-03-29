@@ -17,6 +17,11 @@ DIRS = ((1, 0), (0, 1), (1, -1), (-1, 0), (0, -1), (-1, 1))
 AXES = DIRS[:3]
 
 
+def _hex_dist(q1: int, r1: int, q2: int, r2: int) -> int:
+    """Hex grid distance in axial coordinates."""
+    return (abs(q1 - q2) + abs(r1 - r2) + abs((q1 + r1) - (q2 + r2))) // 2
+
+
 class HexGame:
     def __init__(self):
         self.board: dict[tuple[int, int], int] = {}
@@ -97,6 +102,41 @@ class HexGame:
 
     def legal_moves(self) -> list[tuple[int, int]]:
         return list(self.candidates)
+
+    def zoi_moves(self, margin: int = 6) -> list[tuple[int, int]]:
+        """
+        Zone-of-Interest pruning: return only candidates within `margin` hex
+        steps of the last `lookback` placed pieces. Keeps MCTS focused on the
+        current play area rather than stale candidates from earlier turns.
+
+        Note: HexGame.candidates is already within 1 step of all pieces, so
+        global-ZOI (relative to all pieces) equals candidates. This method
+        uses RECENT pieces as the focus — a tighter, tactically motivated
+        restriction as games grow long and candidates accumulate.
+
+        Default margin=6 is conservative (covers the WIN_LENGTH); reduce to
+        4-5 for faster play once the net is trained enough to not miss threats.
+        """
+        lookback = 8
+        if len(self.move_history) < lookback:
+            return list(self.candidates)
+
+        # Focus: cells within margin of the most recently played pieces
+        recent = self.move_history[-lookback:]
+        within: set[tuple[int, int]] = set()
+        for q0, r0 in recent:
+            for cq, cr in self.candidates:
+                if _hex_dist(q0, r0, cq, cr) <= margin:
+                    within.add((cq, cr))
+
+        # Safety: always include candidates adjacent to the very last move
+        lq, lr = self.move_history[-1]
+        for dq, dr in DIRS:
+            nb = (lq + dq, lr + dr)
+            if nb in self.candidates:
+                within.add(nb)
+
+        return list(within) if len(within) >= 3 else list(self.candidates)
 
     def _check_win(self, q: int, r: int) -> bool:
         player = self.board[(q, r)]

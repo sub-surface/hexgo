@@ -138,6 +138,64 @@ separation.
 
 ---
 
+## Phase 3b — Collaborator Integrations (from Jairaj1234-dancer/hex-ttt-nn)
+
+Six innovations from the collaborator's research, ranked by expected impact.
+
+### ✅ 3b-i. KataGo playout cap randomization (replaces sims curriculum)
+25% of self-play games use full sim budget; 75% use `max(SIMS_MIN, sims//8)`.
+No hyperparameter schedule needed; proven 50× training efficiency over fixed sims.
+Implemented via `_cap_sims(target)` in train.py.
+
+### ✅ 3b-ii. Global pooling branch (KataGo)
+`GlobalPoolBranch(ch)` concatenates board-wide avg + max pooling features and
+projects them back as a residual addition to the trunk feature maps. Gives
+every cell awareness of global game state (threat density, material balance)
+at ~2K extra parameters. Inserted after `self.blocks` in `HexNet.trunk()`.
+
+### ✅ 3b-iii. ZOI (Zone-of-Interest) pruning
+`HexGame.zoi_moves(margin=6)` restricts MCTS expansion to candidates within
+`margin` hex steps of the last 8 placed pieces. Focuses search on the active
+play area; most effective in long games (60+ moves) where stale candidates
+from early play accumulate. Falls back to `legal_moves()` when coverage is full.
+
+### ✅ 3b-iv. Latency / perf tracking
+`PerfTracker` in train.py measures self_play, overlap_train, post_train,
+checkpoint, tournament, eval, heatmap per generation. Logged as a summary line
+with %-of-total and avg-ms-per-call. Three bottleneck warnings:
+- Low inference batching (avg_batch < 2.0)
+- Training dominates (SP < 30% of gen time → under-utilized data pipeline)
+- High dedup rate (> 30% → explore more broadly)
+
+### ✅ 3b-v. CPU offloading / pin_memory
+`train_batch` uses `torch.from_numpy().pin_memory().to(DEVICE, non_blocking=True)`
+for async host→GPU transfers. `inference.py` `_process_batch` does the same.
+Overlaps CPU buffer sampling with GPU compute.
+
+### ✅ 3b-vi. Persistent cross-gen cache
+`_persistent_cache` module-level dict in inference.py survives across
+`InferenceServer` instances. Entries tagged with generation number; evicted
+after `CACHE_MAX_AGE=5` gens via `evict_stale_cache(gen)`. Reduces redundant
+net evaluations for common opening positions across generations.
+
+### 3b-vii. Ownership + threat auxiliary heads
+Add two extra output heads to HexNet:
+- `ownership`: per-cell 3-class prediction (P1/P2/empty) — proven 20-50% faster convergence
+- `threat`: global P1/P2 threat count scalars — strongest spatial gradient signal
+Auxiliary losses: L_total = L_v + L_p + 0.15×L_own + 0.10×L_threat
+Requires new target generation in `self_play_episode` (track threat state at each ply).
+
+### 3b-viii. Recency-weighted replay buffer
+Current: uniform random sampling from FIFO deque.
+Proposed: 75% weight towards positions from the last 10% of games, 25% uniform.
+Tracks policy improvement without mode collapse.
+
+### 3b-ix. MuZero-style reanalysis
+Re-search stored buffer positions with the updated network; replace stale policy
+targets with fresh MCTS distributions. Most beneficial after significant ELO jumps.
+
+---
+
 ## Phase 4 — Equivariance (research)
 
 ### 4a. G-CNN (full D6 equivariance)
@@ -192,6 +250,15 @@ early exit from value head. Low priority until scale experiments run.
 | ✅ 15    | Async self-play (3a)             | done   | Overlapped SP+train, weight sync|
 | ✅ 16    | CUDA Graphs (3c)                 | done   | 30-50% inference speedup       |
 | ✅ 17    | Self-play curriculum (2b)        | done   | Faster early exploration       |
-| 18       | G-CNN full equivariance (4a)     | 1wk    | Principled symmetry            |
-| 19       | CA weight init (4b)              | 2hr    | Z[ω]-aligned priors            |
-| 20       | Scale trunk 4blk/64ch (5a)       | 2hr    | Capacity for harder games      |
+| ✅ 18    | Playout cap randomization (3b-i) | done   | 50x training efficiency        |
+| ✅ 19    | Global pool branch (3b-ii)       | done   | KataGo global awareness        |
+| ✅ 20    | ZOI pruning (3b-iii)             | done   | Focus on active area           |
+| ✅ 21    | Perf/latency tracking (3b-iv)    | done   | Bottleneck visibility          |
+| ✅ 22    | pin_memory CPU offload (3b-v)    | done   | Async host→GPU transfers       |
+| ✅ 23    | Persistent cross-gen cache (3b-vi)| done  | Skip redundant opening evals   |
+| 24       | Aux heads ownership+threat (3b-vii)| 4hr  | 20-50% convergence speedup     |
+| 25       | Recency-weighted replay (3b-viii)| 1hr    | Better policy tracking         |
+| 26       | MuZero-style reanalysis (3b-ix)  | 4hr    | Freshen stale policy targets   |
+| 27       | G-CNN full equivariance (4a)     | 1wk    | Principled symmetry            |
+| 28       | CA weight init (4b)              | 2hr    | Z[ω]-aligned priors            |
+| 29       | Scale trunk 4blk/64ch (5a)       | 2hr    | Capacity for harder games      |

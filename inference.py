@@ -29,23 +29,56 @@ from net import HexNet, encode_board, encode_move, DEVICE, BOARD_SIZE
 _SENTINEL = object()
 
 
+_CUDA = torch.cuda.is_available()
+
+# Persistent cross-generation cache. Entries are (value, policy, gen_added).
+# Pass this dict to InferenceServer to keep evaluations across weight updates.
+# Eviction: entries older than CACHE_MAX_AGE generations are removed at gen start.
+CACHE_MAX_AGE = 5
+_persistent_cache: dict = {}   # key → (value, policy, gen)
+_persistent_cache_lock = threading.Lock()
+
+
+def evict_stale_cache(current_gen: int):
+    """Remove entries older than CACHE_MAX_AGE from the persistent cache."""
+    with _persistent_cache_lock:
+        stale = [k for k, (v, p, g) in _persistent_cache.items()
+                 if current_gen - g > CACHE_MAX_AGE]
+        for k in stale:
+            del _persistent_cache[k]
+
+
 class InferenceServer:
-    def __init__(self, net: HexNet, batch_size: int = 8, timeout_ms: float = 5.0):
+    def __init__(self, net: HexNet, batch_size: int = 8, timeout_ms: float = 5.0,
+                 gen: int = 0):
         self.net = net
         self.batch_size = batch_size
         self.timeout = timeout_ms / 1000.0
+        self.gen = gen
         self._req_queue: queue.Queue = queue.Queue()
         self._thread = threading.Thread(target=self._serve, daemon=True,
                                         name="inference")
         self._running = False
-        # Evaluation cache: frozenset(board.items()) -> (value, policy)
+        # Per-server cache (fast path); persistent cache shared across servers
         self.cache: dict[frozenset, tuple[float, dict]] = {}
         self._cache_lock = threading.Lock()
+        # Latency tracking: list of (batch_size, latency_ms) per batch
+        self._batch_latencies: list[tuple[int, float]] = []
         # Stats
         self.total_calls = 0
         self.total_batches = 0
         self.avg_batch_size = 0.0
         self.cache_hits = 0
+        self.persistent_hits = 0
+
+    def latency_summary(self) -> str:
+        """Return min/avg/max batch latency string for logging."""
+        if not self._batch_latencies:
+            return "no batches"
+        lats = [ms for _, ms in self._batch_latencies]
+        sizes = [n for n, _ in self._batch_latencies]
+        return (f"lat_ms min={min(lats):.1f} avg={sum(lats)/len(lats):.1f} "
+                f"max={max(lats):.1f} | batch_sz avg={sum(sizes)/len(sizes):.1f}")
 
     def start(self):
         self._running = True
@@ -115,12 +148,20 @@ class InferenceServer:
         Thread-safe. Encodes the game state, submits to batch queue, blocks
         until inference completes. Returns (value, {move: logit}).
         """
-        # Cache check
         key = frozenset(game.board.items())
+        # 1. Per-server cache (fastest)
         with self._cache_lock:
             if key in self.cache:
                 self.cache_hits += 1
                 return self.cache[key]
+        # 2. Persistent cross-gen cache
+        with _persistent_cache_lock:
+            if key in _persistent_cache:
+                v, p, _ = _persistent_cache[key]
+                self.persistent_hits += 1
+                with self._cache_lock:
+                    self.cache[key] = (v, p)
+                return v, p
 
         board_arr, (oq, or_) = encode_board(game)
         moves = game.legal_moves()
@@ -158,12 +199,15 @@ class InferenceServer:
                 except queue.Empty:
                     break
 
+            t_batch = time.perf_counter()
             self._process_batch(batch)
+            lat_ms = (time.perf_counter() - t_batch) * 1000.0
 
             # Update stats
             self.total_batches += 1
             self.total_calls += len(batch)
             self.avg_batch_size = self.total_calls / self.total_batches
+            self._batch_latencies.append((len(batch), lat_ms))
 
     def _process_batch(self, batch: list):
         """Run one batched forward pass for all requests."""
@@ -224,9 +268,17 @@ class InferenceServer:
             values  = self._graph_val[val_idxs, 0].float().cpu().numpy()
             logits  = self._graph_pol[:N].float().cpu().numpy()
         else:
-            boards_t = torch.tensor(boards_np, device=DEVICE)
-            moves_t  = torch.tensor(moves_np,  device=DEVICE)
-            with torch.amp.autocast(device_type="cuda" if "cuda" in str(DEVICE) else "cpu"):
+            # pin_memory for async host→GPU transfer on CUDA
+            if _CUDA:
+                boards_t = (torch.from_numpy(boards_np).pin_memory()
+                            .to(DEVICE, non_blocking=True))
+                moves_t  = (torch.from_numpy(moves_np).pin_memory()
+                            .to(DEVICE, non_blocking=True))
+            else:
+                boards_t = torch.tensor(boards_np, device=DEVICE)
+                moves_t  = torch.tensor(moves_np,  device=DEVICE)
+            dev_type = "cuda" if _CUDA else "cpu"
+            with torch.amp.autocast(device_type=dev_type):
                 with torch.no_grad():
                     features = self.net.trunk(boards_t)
                     val_idxs = [s for s, e, r, m, k in request_slices]
@@ -240,4 +292,7 @@ class InferenceServer:
             res = (float(values[i]), policy)
             with self._cache_lock:
                 self.cache[key] = res
+            # Write through to persistent cache
+            with _persistent_cache_lock:
+                _persistent_cache[key] = (float(values[i]), policy, self.gen)
             resp.put(res)
