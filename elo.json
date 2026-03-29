@@ -1,0 +1,328 @@
+{
+  "ratings": {
+    "net_gen0001": 1113.999331716348,
+    "mcts_50": 1290.8652407283096,
+    "net_gen0002": 1195.1354275553424
+  },
+  "history": [
+    {
+      "a": "net_gen0001",
+      "b": "mcts_50",
+      "winner": null,
+      "moves": 300,
+      "duration": 17.3,
+      "ratings": {
+        "net_gen0001": 1200.0,
+        "mcts_50": 1200.0
+      }
+    },
+    {
+      "a": "net_gen0001",
+      "b": "mcts_50",
+      "winner": "mcts_50",
+      "moves": 265,
+      "duration": 14.71,
+      "ratings": {
+        "net_gen0001": 1184.0,
+        "mcts_50": 1216.0
+      }
+    },
+    {
+      "a": "net_gen0001",
+      "b": "mcts_50",
+      "winner": null,
+      "moves": 300,
+      "duration": 13.82,
+      "ratings": {
+        "net_gen0001": 1185.5,
+        "mcts_50": 1214.5
+      }
+    },
+    {
+      "a": "net_gen0001",
+      "b": "mcts_50",
+      "winner": "mcts_50",
+      "moves": 117,
+      "duration": 3.15,
+      "ratings": {
+        "net_gen0001": 1170.8,
+        "mcts_50": 1229.2
+      }
+    },
+    {
+      "a": "net_gen0001",
+      "b": "mcts_50",
+      "winner": "net_gen0001",
+      "moves": 140,
+      "duration": 4.32,
+      "ratings": {
+        "net_gen0001": 1189.5,
+        "mcts_50": 1210.5
+      }
+    },
+    {
+      "a": "net_gen0001",
+      "b": "mcts_50",
+      "winner": null,
+      "moves": 300,
+      "duration": 14.27,
+      "ratings": {
+        "net_gen0001": 1190.4,
+        "mcts_50": 1209.6
+      }
+    },
+    {
+      "a": "net_gen0001",
+      "b": "mcts_50",
+      "winner": "mcts_50",
+      "moves": 246,
+      "duration": 10.61,
+      "ratings": {
+        "net_gen0001": 1175.3,
+        "mcts_50": 1224.7
+      }
+    },
+    {
+      "a": "net_gen0001",
+      "b": "mcts_50",
+      "winner": "mcts_50",
+      "moves": 116,
+      "duration": 3.47,
+      "ratings": {
+        "net_gen0001": 1161.6,
+        "mcts_50": 1238.4
+      }
+    },
+    {
+      "a": "net_gen0001",
+      "b": "mcts_50",
+      "winner": "net_gen0001",
+      "moves": 113,
+      "duration": 3.09,
+      "ratings": {
+        "net_gen0001": 1181.1,
+        "mcts_50": 1218.9
+      }
+    },
+    {
+      "a": "net_gen0001",
+      "b": "mcts_50",
+      "winner": "net_gen0001",
+      "moves": 83,
+      "duration": 2.22,
+      "ratings": {
+        "net_gen0001": 1198.8,
+        "mcts_50": 1201.2
+      }
+    },
+    {
+      "a": "net_gen0001",
+      "b": "mcts_50",
+      "winner": null,
+      "moves": 300,
+      "duration": 20.59,
+      "ratings": {
+        "net_gen0001": 1198.9,
+        "mcts_50": 1201.1
+      }
+    },
+    {
+      "a": "net_gen0001",
+      "b": "mcts_50",
+      "winner": "mcts_50",
+      "moves": 69,
+      "duration": 2.4,
+      "ratings": {
+        "net_gen0001": 1183.0,
+        "mcts_50": 1217.0
+      }
+    },
+    {
+      "a": "net_gen0001",
+      "b": "mcts_50",
+      "winner": "net_gen0001",
+      "moves": 129,
+      "duration": 5.23,
+      "ratings": {
+        "net_gen0001": 1200.6,
+        "mcts_50": 1199.4
+      }
+    },
+    {
+      "a": "net_gen0001",
+      "b": "mcts_50",
+      "winner": "mcts_50",
+      "moves": 153,
+      "duration": 6.63,
+      "ratings": {
+        "net_gen0001": 1184.5,
+        "mcts_50": 1215.5
+      }
+    },
+    {
+      "a": "net_gen0001",
+      "b": "mcts_50",
+      "winner": "mcts_50",
+      "moves": 262,
+      "duration": 13.87,
+      "ratings": {
+        "net_gen0001": 1169.9,
+        "mcts_50": 1230.1
+      }
+    },
+    {
+      "a": "net_gen0001",
+      "b": "mcts_50",
+      "winner": "mcts_50",
+      "moves": 221,
+      "duration": 10.77,
+      "ratings": {
+        "net_gen0001": 1156.7,
+        "mcts_50": 1243.3
+      }
+    },
+    {
+      "a": "net_gen0001",
+      "b": "mcts_50",
+      "winner": "mcts_50",
+      "moves": 250,
+      "duration": 15.56,
+      "ratings": {
+        "net_gen0001": 1144.6,
+        "mcts_50": 1255.4
+      }
+    },
+    {
+      "a": "net_gen0001",
+      "b": "mcts_50",
+      "winner": "mcts_50",
+      "moves": 140,
+      "duration": 5.39,
+      "ratings": {
+        "net_gen0001": 1133.5,
+        "mcts_50": 1266.5
+      }
+    },
+    {
+      "a": "net_gen0001",
+      "b": "mcts_50",
+      "winner": "mcts_50",
+      "moves": 214,
+      "duration": 10.88,
+      "ratings": {
+        "net_gen0001": 1123.4,
+        "mcts_50": 1276.6
+      }
+    },
+    {
+      "a": "net_gen0001",
+      "b": "mcts_50",
+      "winner": "mcts_50",
+      "moves": 77,
+      "duration": 2.95,
+      "ratings": {
+        "net_gen0001": 1114.0,
+        "mcts_50": 1286.0
+      }
+    },
+    {
+      "a": "net_gen0002",
+      "b": "mcts_50",
+      "winner": "mcts_50",
+      "moves": 271,
+      "duration": 36.2,
+      "ratings": {
+        "net_gen0002": 1187.9,
+        "mcts_50": 1298.1
+      }
+    },
+    {
+      "a": "net_gen0002",
+      "b": "mcts_50",
+      "winner": null,
+      "moves": 300,
+      "duration": 46.31,
+      "ratings": {
+        "net_gen0002": 1192.8,
+        "mcts_50": 1293.2
+      }
+    },
+    {
+      "a": "net_gen0002",
+      "b": "mcts_50",
+      "winner": "mcts_50",
+      "moves": 115,
+      "duration": 9.79,
+      "ratings": {
+        "net_gen0002": 1181.3,
+        "mcts_50": 1304.7
+      }
+    },
+    {
+      "a": "net_gen0002",
+      "b": "mcts_50",
+      "winner": "mcts_50",
+      "moves": 64,
+      "duration": 4.93,
+      "ratings": {
+        "net_gen0002": 1170.7,
+        "mcts_50": 1315.3
+      }
+    },
+    {
+      "a": "net_gen0002",
+      "b": "mcts_50",
+      "winner": "net_gen0002",
+      "moves": 244,
+      "duration": 27.31,
+      "ratings": {
+        "net_gen0002": 1193.0,
+        "mcts_50": 1293.0
+      }
+    },
+    {
+      "a": "net_gen0002",
+      "b": "mcts_50",
+      "winner": "mcts_50",
+      "moves": 200,
+      "duration": 24.26,
+      "ratings": {
+        "net_gen0002": 1181.5,
+        "mcts_50": 1304.5
+      }
+    },
+    {
+      "a": "net_gen0002",
+      "b": "mcts_50",
+      "winner": null,
+      "moves": 300,
+      "duration": 48.1,
+      "ratings": {
+        "net_gen0002": 1187.0,
+        "mcts_50": 1299.0
+      }
+    },
+    {
+      "a": "net_gen0002",
+      "b": "mcts_50",
+      "winner": "net_gen0002",
+      "moves": 162,
+      "duration": 15.41,
+      "ratings": {
+        "net_gen0002": 1208.0,
+        "mcts_50": 1278.1
+      }
+    },
+    {
+      "a": "net_gen0002",
+      "b": "mcts_50",
+      "winner": "mcts_50",
+      "moves": 59,
+      "duration": 4.22,
+      "ratings": {
+        "net_gen0002": 1195.1,
+        "mcts_50": 1290.9
+      }
+    }
+  ]
+}

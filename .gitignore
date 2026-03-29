@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+venv/
+
+# Model checkpoints (binary weights — large, not version-controlled)
+checkpoints/*.pt
+checkpoints/legacy/*.pt
+
+# Logs
+*.log
+train.log
+
+# Claude Code local config
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
