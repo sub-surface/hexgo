@@ -1,9 +1,65 @@
 # HexGo — Design Document
 
+## Mathematical Framework: AP-6 Maker-Maker on Z[ω]
+
+### Eisenstein Integer Isomorphism
+
+The hex grid with axial coordinates (q, r) is isomorphic to the Eisenstein
+integer ring **Z[ω]** where ω = e^(2πi/3). Each cell maps to q + r·ω ∈ Z[ω].
+
+The three win axes correspond exactly to the three unit directions:
+- u1 = 1       (q-axis, direction (1,0))
+- u2 = ω       (r-axis, direction (0,1))
+- u3 = ω² = −1−ω  (diagonal, direction (1,−1))
+
+A win is an **arithmetic progression of length 6** in Z[ω] with a unit step —
+i.e., a set {z, z+u, z+2u, z+3u, z+4u, z+5u} for some z ∈ Z[ω] and u ∈ {u1,u2,u3}.
+
+### Symmetry Group
+
+The lattice Z[ω] has symmetry group **D6** (order 12): 6 rotations at 60°
+steps, 6 reflections. In axial coordinates, all 12 transforms are linear
+(integer 2×2 matrix multiply on (q,r)). This means:
+
+1. **HexConv2d** — the geometrically correct spatial kernel is the 7-cell
+   Z[ω] neighbourhood (standard 3×3 with 2 non-hex corners masked).
+2. **D6 augmentation** — every training position can be augmented 12×
+   for free, all by linear transforms on (q,r) with no interpolation.
+
+### Connection to Combinatorics
+
+- **Van der Waerden W(6;2) = 1132**: any 2-coloring of {1…1132} contains a
+  monochromatic AP-6. The grid version (Hales-Jewett) implies similar bounds.
+- **Erdős-Selfridge potential**: ∑ 2^(−|L|) < 1 over all incomplete lines L
+  guarantees a draw strategy for the second player. The EisensteinGreedyAgent
+  approximates this potential on the Z[ω] lattice as a curriculum adversary.
+- **Game value**: HexGo is likely a first-player win (as in all Connect-k
+  games with k ≤ board diameter), but the exact proof is open for infinite hex.
+
+### Sutton's Bitter Lesson — the Right Resolution
+
+The concern: does encoding Z[ω] structure into the architecture violate the
+"general methods + compute" principle?
+
+Resolution: **geometry (structural substrate) ≠ game knowledge**.
+
+- HexConv2d and D6 augmentation fix the *coordinate system* — they ensure the
+  net operates in the correct lattice, not that it is told how to play.
+- The net must still discover that six-in-a-row on any axis wins, that
+  blocking matters, that forks are dangerous — none of this is encoded.
+- AlphaGo Zero similarly used a board-aware architecture (19×19 conv stack,
+  not a flat MLP); the geometry was fixed, the strategy was learned.
+
+The `save_heatmap` scientific instrument tests this: policy mass should
+spontaneously concentrate on the three Z[ω] win axes as training progresses,
+without any explicit encoding of that structure.
+
+---
+
 ## Game: Hexagonal Connect6
 
 Infinite hexagonal grid, axial (q, r) coordinates, flat-top orientation.
-Six-in-a-row wins along any of the three hex axes.
+Six-in-a-row wins along any of the three hex axes (Z[ω] unit directions).
 Board stored as a sparse dict — no pre-allocated grid, no size limit.
 
 ### Complexity estimate
@@ -77,37 +133,60 @@ second-placements. Low priority — ELO uses pure `mcts()` for the baseline.
 | Hidden channels | 32           | Optimized for RTX 2000-series throughput               |
 | Residual blocks | 2            | Deep enough for strategy, shallow for <5ms GPU call    |
 | Precision       | **FP16 AMP** | `torch.amp.autocast` doubles memory bandwidth          |
-| Total params    | ~121K        | Down from 355K (64ch/4 blocks) — 3× faster inference  |
+| Total params    | ~113K        | Parameter-golfed policy head; HexConv2d masked kernels |
 
 ### Board Encoding
-`encode_board(game)` returns `float32 [3, 18, 18]` centered on the centroid
-of all pieces. Channel 0 = player 1 pieces, channel 1 = player 2 pieces,
-channel 2 = to-move plane (0.0 or 1.0).
+`encode_board(game)` returns `float32 [11, 18, 18]` centered on the centroid
+of all pieces:
+- Channels 0–3: P1 piece positions for t, t−1, t−2, t−3 (history planes)
+- Channels 4–7: P2 piece positions for t, t−1, t−2, t−3 (history planes)
+- Channel 8:    player 1 current pieces (same as ch 0, for compatibility)
+- Channel 9:    player 2 current pieces (same as ch 4, for compatibility)
+- Channel 10:   to-move plane (0.0 = P1 to move, 1.0 = P2 to move)
 
-Returns `(arr, (oq, or_))` — the origin offset is needed to map candidate
-moves into the window.
+`N_HISTORY=4`, `IN_CH=11`. Returns `(arr, (oq, or_))`.
+
+### HexConv2d
+`HexConv2d(nn.Conv2d)` registers a `hex_mask` buffer that zeros weight
+positions `[*, *, 0, 0]` and `[*, *, 2, 2]` — the two non-adjacent corners of
+a 3×3 kernel that have no corresponding Z[ω] neighbour. Applied in all
+ResBlocks. The stem uses standard `Conv2d`.
+
+The 7 non-zero kernel positions match the Z[ω] 7-cell neighbourhood exactly:
+```
+  . X X
+  X X X
+  X X .
+```
+(top-left and bottom-right corners are masked)
+
+### D6 Augmentation
+`D6_MATRICES` — 12×2×2 int32 numpy array of all D6 linear transforms on
+axial (q,r) coordinates. `d6_augment_sample(sample, tf_idx)` transforms both
+the board array and move coordinates consistently. Applied at `train_batch`
+time with `tf_idx = random.randrange(12)`.
 
 ### Action Representation
 `encode_move(q, r, oq, or_)` returns a `[1, 18, 18]` one-hot plane, or
 `None` if the move is outside the 18×18 window. Callers must handle `None`.
 
 Policy head: `(trunk_features, move_plane) → scalar logit`.
-Training: **Cross-Entropy** over all legal moves in a position (more stable
-than single-move BCE; avoids the index-0 bug of earlier versions).
+Training: **Cross-Entropy** over all legal moves in a position.
 
 ### Architecture
 ```
-Input [3,18,18]
-  → Conv2d(3→32, 3×3) + BN + ReLU          [stem]
-  → 2× ResBlock(32ch)                       [trunk]
-  ┌→ Conv2d(32→1, 1×1) + BN + ReLU → FC → Tanh  [value head → scalar]
-  └→ Conv2d(32→2, 1×1) + BN + ReLU → cat(move_plane) → FC  [policy → scalar]
+Input [11,18,18]
+  → Conv2d(11→32, 3×3) + BN + ReLU               [stem, standard conv]
+  → 2× ResBlock(32ch, HexConv2d)                  [trunk, Z[omega] kernels]
+  +→ Conv2d(32→1, 1×1) + BN + ReLU → FC → Tanh   [value head → scalar]
+  +→ HexConv2d(32→4, 1×1) + BN + ReLU →
+       cat(move_plane) → Linear(4*S*S+S*S, 32)    [policy → scalar]
 ```
 
 ### Checkpoint compatibility
-Old checkpoints trained with BOARD_SIZE=15 or HIDDEN=64/N_BLOCKS=4 are
-**incompatible** with the current architecture. Stale files are in
-`checkpoints/legacy/`. Always use `checkpoints/net_latest.pt`.
+Breaking architecture changes (IN_CH 3→11, policy head size) are handled by
+`load_latest()`: on `RuntimeError` it moves all `net_*.pt` to
+`checkpoints/legacy/` and starts fresh. Always use `checkpoints/net_latest.pt`.
 
 ---
 
@@ -138,16 +217,27 @@ re-created each gen) to avoid staleness across weight updates.
 ## Training (`train.py`)
 
 ### Pipeline
-1. **Self-play:** 4 parallel workers generate games using the current net
-   via `InferenceServer`.
+1. **Self-play:** 8 parallel workers generate games using the current net
+   via `InferenceServer`. Every 5th game uses `EisensteinGreedyAgent` as P2
+   (adversarial curriculum).
 2. **Buffering:** Positions stored in a 50K-position FIFO `deque`.
-3. **Training:**
+3. **D6 augmentation:** Each training sample augmented with a random D6
+   transform at batch time (`d6_augment_sample(item, random.randrange(12))`).
+4. **Training:**
    - `torch.amp.GradScaler` for FP16 numerical stability.
-   - Value loss: MSE against `z ∈ {+1, -1, 0}`.
-   - Policy loss: Cross-entropy over all legal moves (visit-count distribution
-     from MCTS root as target).
-4. **ELO Evaluation:** New net vs `mcts_50` baseline (`run_match()`).
-5. **Checkpoint:** `net_genXXXX.pt` + `net_latest.pt` after each generation.
+   - Value loss: MSE against TD-lambda target `z_t = 0.99^(T−t) × z_final`.
+   - Policy loss: Cross-entropy over all legal moves (MCTS visit distribution).
+5. **ELO Evaluation:** New net vs `mcts_50` and `EisensteinGreedyAgent(defensive=True)`.
+6. **Heatmap:** `save_heatmap(server, gen)` saves `heatmaps/gen_XXXX.png` —
+   policy distribution over a fixed 10-move test position. Confirms the net
+   discovers Z[ω] axis structure without being told.
+7. **Checkpoint:** `net_genXXXX.pt` + `net_latest.pt` after each generation.
+
+### mcts_policy (tree reuse)
+Returns `(chosen_move, visit_distribution, legal_moves, new_root)`. The caller
+passes `prev_root` on the next call; if it has children matching the game state,
+the subtree is recycled with fresh Dirichlet noise. Saves ~N_SIMS/branching_factor
+simulations per move.
 
 ### Buffer Format
 Each buffer entry is a dict:
@@ -187,11 +277,15 @@ A `tkinter` monitor for real-time visualization:
 
 ## ELO (`elo.py`)
 
-- `ELO` class: tracks ratings per agent name, updates via standard ELO formula.
-- `NetAgent(net, sims)`: uses `mcts_with_net` (or `mcts_policy` via
-  `InferenceServer` — check usage in `train.py`).
-- `MCTSAgent(sims)`: uses pure rollout `mcts()`.
-- `run_match(a, b, n_games)`: plays N games alternating colors, returns win counts.
+- `ELO` class: tracks ratings per agent name, updates via standard ELO formula (K=32).
+- `NetAgent(net, sims)`: uses `mcts_with_net` / `mcts_policy` via `InferenceServer`.
+- `MCTSAgent(sims)`: pure rollout `mcts()` baseline.
+- `RandomAgent`: uniform random legal move.
+- `EisensteinGreedyAgent`: scores each candidate by max chain length along any
+  Z[ω] axis it would create (or block). `defensive=True` variant considers both
+  own extension and blocking the opponent. Zero parameters, zero learned weights —
+  pure Z[ω] arithmetic. Used as curriculum adversary and permanent ELO baseline.
+- `run_match(a, b, n_games)`: N games alternating colors, returns win counts.
 
 ---
 
@@ -201,18 +295,19 @@ A `tkinter` monitor for real-time visualization:
 hexgo/
   game.py       Engine — 1-2-2 turn logic, incremental candidates, make/unmake
   mcts.py       MCTS — player-aware backprop, rollout + net modes
-  net.py        HexNet — ResNet 18x18/32ch/2blk + FP16 AMP, encode_board/move
+  net.py        HexNet — HexConv2d/D6/ResNet 18x18/32ch/11ch/2blk + FP16 AMP
   inference.py  InferenceServer — dynamic batching + transposition cache
-  train.py      Training loop — AMP, FIFO buffer, CE policy loss, ELO eval
-  elo.py        ELO rating — NetAgent, MCTSAgent, run_match
+  train.py      Training loop — D6 aug, Eisenstein curriculum, heatmap, ELO
+  elo.py        ELO rating — NetAgent, MCTSAgent, EisensteinGreedyAgent
   app.py        GUI monitor — pause/resume, win counter, log stream
   replay.py     Terminal replay — 1-2-2 aware, colored last-move bracket
-  test_game.py  Unit tests — all pass (8 tests)
+  test_game.py  Unit tests — all 26 pass (game/encoding/D6/agent)
   render.py     Hex board renderer (shared by app + replay)
   checkpoints/  net_gen*.pt, net_latest.pt
-  checkpoints/legacy/  old 15×15 / 64ch checkpoints (incompatible)
+  checkpoints/legacy/  incompatible checkpoints (auto-quarantined)
+  heatmaps/     gen_XXXX.png — policy heatmap per generation
   replays/      game_first_genXXXX_*.json, game_last_genXXXX_*.json
-  docs/         DESIGN.md (this file), ROADMAP.md
+  docs/         DESIGN.md (this file), ROADMAP.md, NOTES.md
 ```
 
 ---

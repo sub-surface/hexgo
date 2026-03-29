@@ -49,6 +49,14 @@ class InferenceServer:
 
     def start(self):
         self._running = True
+        # 1b: compile net for reduced kernel-launch overhead on CUDA.
+        # dynamic=True handles variable batch sizes without recompilation.
+        # Falls back silently if torch.compile is unavailable (PyTorch < 2.0).
+        if torch.cuda.is_available() and hasattr(torch, "compile"):
+            try:
+                self.net = torch.compile(self.net, dynamic=True)
+            except Exception:
+                pass  # non-fatal: older PyTorch or unsupported configuration
         self._thread.start()
 
     def stop(self):

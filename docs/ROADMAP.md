@@ -1,13 +1,40 @@
 # HexGo — Roadmap
 
-Phased optimization plan. Each phase is independent and additive.
-Current baseline: ~121K params, 4 workers, RTX 2060, ~30–60s/gen.
+The Z[ω] self-play ladder: arithmetic progressions, Eisenstein symmetry, and
+emergent structure. Each phase is independent and additive.
+
+Current baseline: ~113K params, 8 workers, RTX 2060, ~30–60s/gen.
 
 ---
 
-## Phase 0 — Stability (now)
+## Mathematical Foundation (established)
 
-All items already addressed or confirmed working:
+HexGo = **AP-6 Maker-Maker on Z[ω]**.
+
+The hex grid with axial (q, r) coordinates is isomorphic to the Eisenstein
+integer ring Z[ω] where ω = e^(2πi/3). The three win axes correspond to the
+unit directions {1, ω, ω²}. A win is exactly an arithmetic progression of
+length 6 in Z[ω] with a unit step.
+
+This framing has two practical consequences:
+
+1. **The right convolution kernel is the 7-cell Z[ω] neighbourhood** — a
+   standard 3×3 grid with 2 non-adjacent corners masked. `HexConv2d` enforces
+   this directly.
+
+2. **The symmetry group of the lattice is D6 (order 12)** — 6 rotations at 60°
+   steps, 6 reflections. Every training position can be augmented 12× for free,
+   all produced by linear transforms on axial (q, r) coordinates.
+
+Connection to combinatorics: W(6;2) = 1132 (van der Waerden), meaning any
+2-coloring of {1…1132} contains a monochromatic AP-6. Hales-Jewett implies the
+same for the grid version. The Erdős-Selfridge potential sum ∑ 2^(−|L|) for
+incomplete lines < 1 gives a theoretically safe second-player draw strategy;
+our Eisenstein greedy bot approximates this on the Z[ω] lattice.
+
+---
+
+## Phase 0 — Stability (done)
 
 - [x] 1-2-2 Connect6 rule in `game.py`
 - [x] Player-aware MCTS backprop in `mcts.py`
@@ -16,215 +43,155 @@ All items already addressed or confirmed working:
 - [x] Divide-by-zero guard in visit distribution normalization
 - [x] Transposition cache in `InferenceServer`
 - [x] `checkpoints/legacy/` quarantine for incompatible weights
-- [x] All 8 unit tests pass
-
-**Remaining gap:** `mcts_with_net()` in `mcts.py` creates leaf children
-without `player=game.current_player`. Only affects standalone `mcts_with_net`
-calls; `train.py` uses its own `mcts_policy()` which is correct. Fix when
-`mcts_with_net` is used outside training.
+- [x] 8 baseline unit tests pass
 
 ---
 
-## Phase 1 — Throughput (high ROI, low risk)
+## Phase 1 — Geometry-Faithful Architecture (done)
 
-### 1a. Fix inference batching (avg_batch ≈ 1.0 → >3.0)
+All implemented and verified: 26/26 unit tests pass.
 
-The inference server timeout (5ms) fires before parallel workers have all
-submitted their requests. Options:
-- Increase `INF_TIMEOUT` from 5ms → 20–50ms (simplest fix, adds latency)
-- Increase `NUM_WORKERS` from 4 → 8–16 (more concurrent games fill the batch)
-- **Best:** raise both; profile `avg_batch_size` to find the sweet spot for
-  RTX 2060 (expect diminishing returns past batch=8 for a 121K-param net)
+### 1a. Inference batching
+`NUM_WORKERS=8`, `INF_BATCH=8`, `INF_TIMEOUT=30ms`.
 
-Expected gain: 3–5× throughput (from amortizing kernel launch overhead).
+### 1b. `torch.compile` on inference
+Applied in `InferenceServer.start()` when CUDA available.
 
-### 1b. CUDA Graphs for the inference hot path
+### 1c. Tree reuse
+`mcts_policy()` returns `new_root`; the next call re-uses the subtree with
+re-applied Dirichlet noise.
 
-PyTorch CUDA Graphs capture a static computation graph and replay it without
-Python overhead. Requires fixed batch size and static tensor shapes.
+### 1d. Cosine temperature annealing (was 3a)
+`temp = max(0.05, cos(π × move / T))` — no hard cliff at move 20.
 
-```python
-# Capture once after first batch
-import torch
-g = torch.cuda.CUDAGraph()
-with torch.cuda.graph(g):
-    out = net.trunk(boards_static)
-    ...
-# Replay:
-boards_static.copy_(new_boards)
-g.replay()
-```
+### 1e. TD-lambda value targets (was 3b)
+`z_t = 0.99^(T−t) × z_final` — early positions receive discounted signal.
 
-Works well with our fixed 18×18 board encoding and batched inference server.
-Expected: 30–50% reduction in inference latency on GPU.
+### 1f. History planes (was 4c)
+Input channels: 3 → 11 (4 P1-history + 4 P2-history + to-move). Standard
+AlphaZero temporal encoding.
 
-### 1c. Tree reuse (subtree recycling)
+### 1g. Parameter golf policy head (was 2c)
+`p_conv` 2→4 channels; `p_fc` 64→32 hidden. Better capacity/param ratio.
+Total: ~113K params.
 
-After each move, re-root the MCTS tree at the child node matching the chosen
-move and retain its subtree. AlphaZero reuses ~N_SIMS/branching_factor
-simulations "for free".
+### 1h. INT8 quantization utility (was 2a)
+`quantize_for_inference(net)` via `torch.ao.quantization.quantize_dynamic`.
 
-```python
-# After choosing move m:
-new_root = next(c for c in root.children if c.move == m)
-new_root.parent = None  # detach
-```
+### 1i. HexConv2d (new)
+`nn.Conv2d` subclass that registers a `hex_mask` buffer zeroing the two
+non-hex corners `[0,0,0,0]` and `[0,0,2,2]`. Applied in all ResBlocks.
+Enforces Z[ω] 7-cell neighbourhood in every spatial convolution.
 
-Savings scale with tree depth. At 100 sims/move with branching ~20, this
-saves ~5 sims worth of work per move (modest but free).
+### 1j. D6 data augmentation (new)
+12 linear transforms (6 rotations × 2 reflections) on axial (q, r) coords.
+Applied at `train_batch` time: `d6_augment_sample(item, random.randrange(12))`.
+Up to 12× sample efficiency with zero extra self-play cost.
 
----
+### 1k. EisensteinGreedyAgent curriculum (new)
+Zero-parameter bot scoring each candidate by the maximum chain length it would
+create or block along any Z[ω] axis. `defensive=True` variant considers both
+own extension and opponent blocking. Used as 20% adversarial training partner
+(every 5th game) and permanent ELO baseline. Approximates Erdős-Selfridge
+potential on the lattice.
 
-## Phase 2 — Model Compression (research-informed)
-
-### 2a. INT4 / FP8 Weight Quantization (inference only)
-
-Motivated by **OpenAI Parameter Golf** (openai/parameter-golf) and
-**TurboQuant** (Google Research, 2024).
-
-For inference-only quantization (weights quantized, activations FP16):
-
-```python
-# Using bitsandbytes or torch.ao.quantization
-import bitsandbytes as bnb
-# Replace nn.Linear with bnb.nn.Linear4bit for the FC layers
-```
-
-Our net is already tiny (121K params, ~240KB FP16). INT4 would reduce to
-~60KB. The value is in reduced memory bandwidth pressure during batched GPU
-calls, not storage.
-
-**TurboQuant concepts applicable here:**
-- **PolarQuant**: represent weights as (magnitude, angle) in 2D. For 2D conv
-  weight pairs, quantize the angle to a grid (e.g., 4 bits → 16 directions).
-  Preserves relative direction better than uniform quantization.
-- **QJL (Quantized JL Transform)**: apply a random rotation before 1-bit
-  quantization. The rotation evenly distributes weight variance across
-  dimensions, making 1-bit closer to optimal. Most relevant for the FC layers
-  in our value/policy heads.
-
-Practical recommendation: apply `torch.ao.quantization.quantize_dynamic` to
-the FC layers as a low-effort first step. Full INT4 for the conv trunk is a
-larger investment.
-
-### 2b. Activation Sparsity / Early Exit
-
-The value head (`v_fc`) is a 2-layer MLP. If the first layer output is mostly
-zero (after ReLU), skip the second layer and return an interpolated estimate.
-Profile activation density first — only worth it if >60% sparsity observed.
-
-### 2c. Parameter Golf: what can we remove?
-
-Inspired by openai/parameter-golf's principle that parameter count is the
-wrong objective — *effective capacity per parameter* matters.
-
-Current architecture audit:
-- The **policy FC** layer (`p_fc`) takes `2*18*18 + 18*18 = 972` inputs into
-  64 hidden units. This is the largest single weight tensor (~62K params,
-  51% of the model). The trunk features passed to it are a 2-channel
-  compressed map — this compression is doing a lot of work.
-- Try: replace `Conv2d(hidden, 2, 1)` with `Conv2d(hidden, 4, 1)` and reduce
-  `p_fc` hidden size from 64 → 32. Should maintain capacity with fewer params.
-- Alternatively: use a dot-product policy head (trunk_feature · move_feature)
-  rather than concatenation. This is parameter-free and may generalize better.
+### 1l. Policy heatmap (new)
+`save_heatmap(server, gen)` evaluates a fixed 10-move canonical test position
+each generation and saves a `heatmaps/gen_XXXX.png` scatter plot of policy
+mass over hex coordinates. Scientific instrument: confirms the net discovers
+Z[ω] structure (policy mass should concentrate on the three win axes) without
+any explicit encoding of that structure.
 
 ---
 
-## Phase 3 — Training Quality
+## Phase 2 — Training Quality
 
-### 3a. PUCT temperature annealing
+### 2a. Zobrist-keyed buffer deduplication (was 3c)
+Connect6 on a hex grid produces near-duplicate positions from different
+2-placement orderings. A Zobrist hash can deduplicate the replay buffer,
+increasing effective diversity per training step.
 
-Current: temp=1.0 for first 20 moves, then temp=0 (argmax). This creates a
-hard cliff. Try cosine annealing: `temp = max(0.05, cos(pi * move / T))`.
+### 2b. Self-play curriculum (was 3d)
+Start `sims=25`, ramp to `sims=200` as ELO stabilizes. Noisy early games
+explore policy space faster; high-sim late games refine tactics.
 
-### 3b. Value target improvement
-
-Current: `z = +1 (winner) / -1 (loser)` for all positions in a game.
-Problem: early game positions of the winner are not actually winning — they
-get a misleading +1 signal.
-
-Better: discount factor or TD-lambda style target:
-```python
-z_t = gamma^(T - t) * z_final  # gamma ≈ 0.99
-```
-This makes early positions less certain and speeds up value head convergence.
-
-### 3c. Zobrist-keyed replay buffer deduplication
-
-Connect6 games on a hex grid produce many near-duplicate positions (same board,
-different move orderings for the 2-placement turns). A Zobrist hash can
-deduplicate the buffer, increasing effective diversity per training step.
-
-```python
-import random
-ZOBRIST = {(q_bits, r_bits, player): random.getrandbits(64)
-           for q_bits in range(-20, 21)
-           for r_bits in range(-20, 21)
-           for player in (1, 2)}
-```
-
-### 3d. Self-play curriculum
-
-Start training with `sims=25` (fast, noisy games) and ramp to `sims=200` as
-ELO stabilizes. Noisy early games explore the policy space faster; high-sim
-late games refine tactics.
+### 2c. Checkpoint tournament (was 5c)
+New net must beat ≥55% of the top-K checkpoint pool to become training policy.
+Prevents catastrophic forgetting.
 
 ---
 
-## Phase 4 — Representation
+## Phase 3 — Infrastructure
 
-### 4a. Relative coordinate encoding
+### 3a. Async training / inference separation (was 5a)
+Decouple self-play from training: N self-play workers write to a shared buffer;
+a separate process reads from it. Removes per-generation pause.
 
-Current centroid-centered window loses awareness of board orientation.
-Alternative: encode position relative to the last move (or center of the last
-2 moves). This makes the representation **translation-invariant** and may
-reduce the window size needed.
+### 3b. Replay diversity sampling (was 5b)
+Weight samples by recency or policy loss magnitude (prioritized experience
+replay). Keeps the model learning from its most informative positions.
 
-### 4b. Hex-aware convolution (optional)
-
-Standard square conv doesn't respect hex geometry. A hex-aware kernel mask
-(zero out the two non-adjacent grid corners per 3×3 kernel) could improve
-spatial learning. Modest impact for a shallow net.
-
-### 4c. History planes
-
-Add N=4 history planes to the input (previous moves for both players).
-Changes input channels from 3 → 3 + 2N = 11. This is standard in AlphaZero
-and gives the net awareness of move order within the 2-placement turns.
+### 3c. CUDA Graphs hot path
+Capture static computation graph for fixed-shape inference. Expected 30–50%
+latency reduction. Requires fixed batch size — pair with Phase 3a async
+separation.
 
 ---
 
-## Phase 5 — Infrastructure
+## Phase 4 — Equivariance (research)
 
-### 5a. Async training / inference separation
+### 4a. G-CNN (full D6 equivariance)
+Replace standard convolutions with group-equivariant layers that maintain
+explicit D6 symmetry throughout the trunk, not just via augmentation. This is
+the *correct* Sutton-compatible treatment: geometry (structural substrate) ≠
+game knowledge. The network learns game strategy; the substrate enforces
+the symmetry.
 
-Decouple self-play from training: run N self-play workers writing to a shared
-buffer, and a separate training process reading from it. This removes the
-per-generation pause and allows continuous training.
+References: Cohen & Welling, "Group Equivariant Convolutional Networks" (2016);
+Bekkers, "B-Spline CNNs on Lie Groups" (2020).
 
-### 5b. Replay diversity sampling
+### 4b. CA weight initialization (deferred — see NOTES.md)
+Investigate initializing HexConv2d weights using cellular automata patterns
+rather than Xavier/He. The 7-cell Z[ω] neighbourhood IS the standard NCA
+update kernel; a CA-derived prior might align weights with local hex dynamics
+before any training. See: Mordvintsev et al., "Growing Neural Cellular
+Automata" (2020).
 
-Instead of uniform random buffer sampling, weight samples by recency
-(prioritized experience replay, PER) or by policy loss magnitude. Keeps the
-model learning from its most informative positions.
+---
 
-### 5c. Checkpoint tournament
+## Phase 5 — Model Scale
 
-Keep top-K checkpoints. New net must beat ≥55% of the tournament pool (not
-just the latest baseline) to become the new training policy. Prevents
-catastrophic forgetting.
+### 5a. Scale trunk depth/width
+Current: 2 ResBlocks, 32 channels. Next: 4 blocks, 64 channels (~480K params).
+Only after Phase 3 infrastructure — wasted without async self-play.
+
+### 5b. Activation sparsity / early exit
+Profile `v_fc` first layer activation density. If >60% sparsity, implement
+early exit from value head. Low priority until scale experiments run.
 
 ---
 
 ## Priority Order (RTX 2060, solo researcher)
 
-| Priority | Item                          | Effort | Expected gain            |
-|----------|-------------------------------|--------|--------------------------|
-| 1        | Fix inference batching (1a)   | 30min  | 3-5× throughput          |
-| 2        | Tree reuse (1c)               | 1hr    | ~5% free sims            |
-| 3        | TD-lambda value targets (3b)  | 2hr    | Faster value convergence |
-| 4        | PUCT temp annealing (3a)      | 30min  | Better early exploration |
-| 5        | CUDA Graphs (1b)              | 3hr    | 30-50% inference speedup |
-| 6        | INT4 FC quantization (2a)     | 2hr    | Reduced bandwidth        |
-| 7        | History planes (4c)           | 2hr    | Better temporal rep      |
-| 8        | Parameter golf policy head (2c)| 1hr   | Better capacity/param    |
+| Priority | Item                             | Effort | Expected gain                  |
+|----------|----------------------------------|--------|--------------------------------|
+| ✅ 1     | Inference batching (1a)          | done   | 3-5× throughput                |
+| ✅ 2     | Tree reuse (1c)                  | done   | ~5% free sims                  |
+| ✅ 3     | TD-lambda value targets (1e)     | done   | Faster value convergence       |
+| ✅ 4     | PUCT temp annealing (1d)         | done   | Better early exploration       |
+| ✅ 5     | torch.compile (1b)               | done   | 30-50% inference speedup       |
+| ✅ 6     | INT8 quantization utility (1h)   | done   | Reduced bandwidth              |
+| ✅ 7     | History planes (1f)              | done   | Better temporal rep            |
+| ✅ 8     | Parameter golf policy head (1g)  | done   | Better capacity/param          |
+| ✅ 9     | HexConv2d Z[ω] kernel (1i)       | done   | Geometry-faithful conv         |
+| ✅ 10    | D6 augmentation (1j)             | done   | Up to 12× sample efficiency    |
+| ✅ 11    | EisensteinGreedyAgent (1k)       | done   | Structured curriculum adversary|
+| ✅ 12    | Policy heatmap (1l)              | done   | Scientific instrument          |
+| 13       | Zobrist buffer dedup (2a)        | 2hr    | Better replay diversity        |
+| 14       | Checkpoint tournament (2c)       | 3hr    | Stable training policy         |
+| 15       | Async self-play (3a)             | 4hr    | Continuous training            |
+| 16       | CUDA Graphs (3c)                 | 3hr    | 30-50% inference speedup       |
+| 17       | Self-play curriculum (2b)        | 1hr    | Faster early exploration       |
+| 18       | G-CNN full equivariance (4a)     | 1wk    | Principled symmetry            |
+| 19       | CA weight init (4b)              | 2hr    | Z[ω]-aligned priors            |
+| 20       | Scale trunk 4blk/64ch (5a)       | 2hr    | Capacity for harder games      |

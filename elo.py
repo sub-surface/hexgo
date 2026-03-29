@@ -38,6 +38,58 @@ class RandomAgent:
         return random.choice(game.legal_moves())
 
 
+class EisensteinGreedyAgent:
+    """
+    Algorithmic agent grounded in the Eisenstein integer (Z[omega]) ontology.
+
+    Scores each candidate move by the maximum chain it would create or block
+    along any of the three unit-direction axes of Z[omega]:
+        u1 = (1,0)   q-axis
+        u2 = (0,1)   r-axis
+        u3 = (1,-1)  diagonal axis
+
+    No lookahead, no learned weights — pure greedy chain extension.
+    Used as a curriculum adversary (forces the net to beat structured play)
+    and as a permanent ELO baseline to measure progress against a known ontology.
+
+    defensive=False : maximise own chain length only
+    defensive=True  : max(own extension, blocking opponent's best chain)
+    """
+    _AXES = ((1, 0), (0, 1), (1, -1))
+
+    def __init__(self, name: str = "eisenstein_greedy", defensive: bool = False):
+        self.name = name
+        self.defensive = defensive
+
+    def choose_move(self, game: HexGame) -> tuple[int, int]:
+        player   = game.current_player
+        opponent = 3 - player
+        best_move, best_score = None, -1
+
+        for q, r in game.legal_moves():
+            own   = self._chain_if_placed(game, q, r, player)
+            block = self._chain_if_placed(game, q, r, opponent) if self.defensive else 0
+            score = max(own, block)
+            if score > best_score:
+                best_score, best_move = score, (q, r)
+
+        return best_move or random.choice(game.legal_moves())
+
+    def _chain_if_placed(self, game: HexGame, q: int, r: int, player: int) -> int:
+        """Longest run player would have along any Z[omega] axis if placed at (q,r)."""
+        best = 1
+        for dq, dr in self._AXES:
+            count = 1
+            for sign in (1, -1):
+                nq, nr = q + sign * dq, r + sign * dr
+                while game.board.get((nq, nr)) == player:
+                    count += 1
+                    nq += sign * dq
+                    nr += sign * dr
+            best = max(best, count)
+        return best
+
+
 class MCTSAgent:
     def __init__(self, sims: int = 100):
         self.sims = sims
