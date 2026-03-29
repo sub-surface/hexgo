@@ -39,6 +39,8 @@ class HexGame:
 
     def make(self, q: int, r: int) -> bool:
         """Place current player's piece. Returns True if legal."""
+        if q is None or r is None:
+            return False
         if self.winner or (q, r) in self.board:
             return False
 
@@ -139,6 +141,7 @@ class HexGame:
         return list(within) if len(within) >= 3 else list(self.candidates)
 
     def _check_win(self, q: int, r: int) -> bool:
+        assert WIN_LENGTH == 6, f"WIN_LENGTH corrupted: {WIN_LENGTH}"
         player = self.board[(q, r)]
         for dq, dr in AXES:
             count = 1
