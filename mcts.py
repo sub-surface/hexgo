@@ -13,7 +13,11 @@ import random
 import numpy as np
 from game import HexGame
 
-C_PUCT = 1.4
+try:
+    from config import CFG
+    C_PUCT = CFG["CPUCT"]
+except ImportError:
+    C_PUCT = 1.4
 
 
 class Node:

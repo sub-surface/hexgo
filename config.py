@@ -9,7 +9,7 @@ CFG = {
     "SIMS":             50,
     "SIMS_MIN":         25,
     "CAP_FULL_FRAC":    0.25,
-    "CPUCT":            1.4,
+    "CPUCT":            1.0,
     "DIRICHLET_ALPHA":  0.3,
     "DIRICHLET_EPS":    0.25,
     "ZOI_MARGIN":       6,
