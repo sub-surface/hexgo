@@ -509,51 +509,77 @@ def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20):
             dur = time.perf_counter() - t0
             return g_idx, data, winner, moves, dur
 
+        # 3a: Overlapped self-play + training — train batches fire while games
+        # are still running rather than waiting for all games to finish first.
+        # WEIGHT_SYNC_BATCHES controls how often the SP server gets fresh weights.
+        WEIGHT_SYNC_BATCHES = 20
+        losses, entropies = [], []
+        batches_since_sync = 0
         workers = min(NUM_WORKERS, games_per_gen)
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-            futs = [pool.submit(run_one_game, g) for g in range(games_per_gen)]
-            for fut in concurrent.futures.as_completed(futs):
-                g_idx, data, winner, moves, dur = fut.result()
-                # 2a: Zobrist-style dedup — skip positions already seen this gen
-                for item in data:
-                    h = hash(item["board"].tobytes())
-                    if h not in gen_hashes:
-                        gen_hashes.add(h)
-                        buffer.append(item)
-                        total_positions += 1
-                    else:
-                        deduped += 1
-                game_wins[winner] += 1
-                last_moves, last_winner = moves, winner
-                log.info("  SP G%02d winner=%s moves=%d dur=%.1fs buffer=%d "
-                         "avg_batch=%.1f sims=%d",
-                         g_idx + 1, winner, len(moves), dur, len(buffer),
-                         server.avg_batch_size, cur_sims)
-                if not first_saved and gen == start_gen + 1:
-                    save_replay(moves, winner, gen, "first")
-                    first_saved = True
+            pending = {pool.submit(run_one_game, g): g for g in range(games_per_gen)}
+
+            while pending:
+                # Drain completed games (non-blocking poll)
+                done, pending = concurrent.futures.wait(
+                    pending, timeout=0.05,
+                    return_when=concurrent.futures.FIRST_COMPLETED)
+
+                for fut in done:
+                    g_idx, data, winner, moves, dur = fut.result()
+                    for item in data:
+                        h = hash(item["board"].tobytes())
+                        if h not in gen_hashes:
+                            gen_hashes.add(h)
+                            buffer.append(item)
+                            total_positions += 1
+                        else:
+                            deduped += 1
+                    game_wins[winner] += 1
+                    last_moves, last_winner = moves, winner
+                    log.info("  SP G%02d winner=%s moves=%d dur=%.1fs buffer=%d "
+                             "avg_batch=%.1f sims=%d",
+                             g_idx + 1, winner, len(moves), dur, len(buffer),
+                             server.avg_batch_size, cur_sims)
+                    if not first_saved and gen == start_gen + 1:
+                        save_replay(moves, winner, gen, "first")
+                        first_saved = True
+
+                # Train overlapped with remaining self-play
+                if len(buffer) >= BATCH_SIZE:
+                    result = train_batch(net, optimizer, scaler, buffer)
+                    if result:
+                        losses.append(result["loss"])
+                        entropies.append(result.get("entropy", 0))
+                        batches_since_sync += 1
+
+                    # Sync updated weights back to self-play server periodically
+                    if batches_since_sync >= WEIGHT_SYNC_BATCHES:
+                        sd = (net._orig_mod.state_dict()
+                              if hasattr(net, "_orig_mod") else net.state_dict())
+                        server.net.load_state_dict(sd)
+                        batches_since_sync = 0
 
         server.stop()
         save_replay(last_moves, last_winner, gen, "last")
         log.info("  Dedup: skipped %d duplicate positions", deduped)
-
         log.info("  Self-play done: X=%d O=%d draw=%d  total_pos=%d  hits=%d",
                  game_wins[1], game_wins[2], game_wins[None], total_positions,
                  server.cache_hits)
 
-        # Training
-        if len(buffer) >= BATCH_SIZE:
-            losses = []
-            entropies = []
-            n_batches = max(10, total_positions // BATCH_SIZE)
-            for _ in range(n_batches):
-                result = train_batch(net, optimizer, scaler, buffer)
-                if result:
-                    losses.append(result["loss"])
-                    entropies.append(result.get("entropy", 0))
-            log.info("  Train: %d batches  avg_loss=%.4f  avg_ent=%.4f", 
-                     n_batches, sum(losses) / max(len(losses), 1),
-                     sum(entropies) / max(len(entropies), 1))
+        # Post-game training: continue for any remaining budget
+        n_extra = max(0, max(10, total_positions // BATCH_SIZE) - len(losses))
+        for _ in range(n_extra):
+            result = train_batch(net, optimizer, scaler, buffer)
+            if result:
+                losses.append(result["loss"])
+                entropies.append(result.get("entropy", 0))
+
+        if losses:
+            log.info("  Train: %d batches  avg_loss=%.4f  avg_ent=%.4f",
+                     len(losses), sum(losses) / len(losses),
+                     sum(entropies) / len(entropies))
         else:
             log.info("  Buffer too small to train (%d < %d)", len(buffer), BATCH_SIZE)
 
