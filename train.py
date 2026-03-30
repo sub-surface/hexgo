@@ -216,7 +216,8 @@ def mcts_policy(game: HexGame, server: InferenceServer, sims: int,
             game.make(*node.move)
             depth += 1
         if game.winner is not None:
-            v = -1.0
+            # node.player just moved and won; backprop convention: +1 = node.player wins
+            v = 1.0
         else:
             v, lp = server.evaluate(game)
             lmoves = game.zoi_moves(ZOI_MARGIN)
@@ -250,7 +251,8 @@ def self_play_episode(server: InferenceServer, sims: int, temp_horizon: int = 40
     Play one full game, return (training_data, winner, all_moves).
 
     3a (cosine temp annealing): temperature decays smoothly from 1→0.05 over
-        temp_horizon moves via max(0.05, cos(π·move/T)), replacing the hard cliff.
+        temp_horizon moves via max(0.05, cos(π/2·move/T)). Reaches floor at
+        move=T (half-cosine, T is the full-life not half-life).
     1c (tree reuse): chosen child node is recycled as the root for the next call,
         inheriting its subtree and saving ~sims/branching_factor sims per move.
     3b (TD-lambda targets): z_t = gamma^(T-1-t) * z_final instead of uniform ±1,
@@ -278,8 +280,9 @@ def self_play_episode(server: InferenceServer, sims: int, temp_horizon: int = 40
             move_num += 1
             continue
 
-        # 3a: cosine temperature annealing
-        temp = max(0.05, math.cos(math.pi * move_num / temp_horizon))
+        # 3a: cosine temperature annealing: 1→floor over temp_horizon moves.
+        # Using half-cosine: cos(π/2 * move/T) → 1.0 at move=0, 0.0 at move=T.
+        temp = max(0.05, math.cos(math.pi / 2 * move_num / max(temp_horizon, 1)))
         board_arr, (oq, or_) = encode_board(game)
         # 1c: pass prev_root for tree reuse
         chosen, dist, moves, new_root = mcts_policy(game, server, sims, temp,
@@ -655,8 +658,10 @@ def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20, tune_mode:
                         save_replay(moves, winner, gen, "first")
                         first_saved = True
 
-                # Train overlapped with remaining self-play
-                if len(buffer) >= BATCH_SIZE:
+                # Train overlapped with remaining self-play.
+                # Cap at WEIGHT_SYNC_BATCHES per loop iteration to prevent
+                # overfit when self-play is slow and buffer is stale.
+                if len(buffer) >= BATCH_SIZE and batches_since_sync < WEIGHT_SYNC_BATCHES:
                     perf.start("overlap_train")
                     result = train_batch(net, optimizer, scaler, buffer)
                     perf.stop("overlap_train")
@@ -764,6 +769,22 @@ def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20, tune_mode:
                 "gen_time_s":  round(time.perf_counter() - t_gen, 1),
             })
             tune_result_path.write_text(json.dumps(existing, indent=2))
+
+        # Dashboard metrics hook — append one line per gen to metrics.jsonl.
+        # Written unconditionally so the dashboard always has data.
+        avg_loss = sum(losses) / len(losses) if losses else None
+        avg_ent  = sum(entropies) / len(entropies) if entropies else None
+        _metrics_line = {
+            "gen":          gen,
+            "avg_loss":     round(avg_loss, 4) if avg_loss is not None else None,
+            "avg_ent":      round(avg_ent,  4) if avg_ent  is not None else None,
+            "eis_winrate":  round(eis_wins / eis_n, 3),
+            "gen_time_s":   round(time.perf_counter() - t_gen, 1),
+            "buffer_size":  len(buffer),
+            "positions":    total_positions,
+        }
+        with open("metrics.jsonl", "a", encoding="utf-8") as _mf:
+            _mf.write(json.dumps(_metrics_line) + "\n")
 
         # Latency summary + bottleneck warnings
         t_total = time.perf_counter() - t_gen
