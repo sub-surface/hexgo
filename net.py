@@ -384,13 +384,13 @@ def evaluate(net: HexNet, game: HexGame) -> tuple[float, dict]:
         return value, {}
 
     B = len(valid_moves)
-    board_t = torch.tensor(board_arr, device=device).unsqueeze(0)   # [1,3,S,S]
-    boards  = board_t.expand(B, -1, -1, -1)                         # [B,3,S,S]
+    board_t = torch.tensor(board_arr, device=device).unsqueeze(0)   # [1,C,S,S]
     move_t  = torch.tensor(np.stack(planes), device=device)         # [B,1,S,S]
 
-    features = net.trunk(boards)
-    value = net.value(features[:1]).item()
-    logits = net.policy_logit(features, move_t).cpu().numpy()
+    feat1    = net.trunk(board_t)                                    # [1,F,S,S]
+    value    = net.value(feat1).item()
+    features = feat1.expand(B, -1, -1, -1)                          # [B,F,S,S] — no recompute
+    logits   = net.policy_logit(features, move_t).cpu().numpy()
 
     policy = {m: float(l) for m, l in zip(valid_moves, logits)}
     return value, policy

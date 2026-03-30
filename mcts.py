@@ -188,11 +188,13 @@ def mcts_with_net(game: HexGame, net, num_simulations: int = 100,
         if game.winner is not None:
             # node.player is the player who just moved (and won).
             # _backprop convention: value is from node.player's perspective.
-            # +1.0 = node.player won.
-            v = 1.0
+            v = 1.0 if game.winner == node.player else -1.0
         else:
-            # Expand with net
+            # Expand with net. evaluate() returns value from game.current_player's
+            # perspective; negate if that differs from node.player.
             v, leaf_policy = evaluate(net, game)
+            if node.player != game.current_player:
+                v = -v   # evaluate() returns from game.current_player's POV; align to node.player
             leaf_moves = game.legal_moves()
             if leaf_moves:
                 llogits = np.array([leaf_policy.get(m, 0.0) for m in leaf_moves], dtype=np.float32)

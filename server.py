@@ -19,6 +19,7 @@ Endpoints:
 import asyncio
 import json
 import os
+import queue as _queue
 import signal
 import subprocess
 import sys
@@ -121,20 +122,22 @@ _singleton = ProcessSingleton()
 
 
 # ── SSE event bus ─────────────────────────────────────────────────────────────
+# Use thread-safe queue.Queue (not asyncio.Queue) so _broadcast can be called
+# from background threads without event-loop corruption.
 
-_sse_subscribers: list[asyncio.Queue] = []
+_sse_subscribers: list[_queue.Queue] = []
 _sse_lock = threading.Lock()
 
 
 def _broadcast(event: dict):
-    """Push an event to all SSE subscribers (thread-safe)."""
+    """Push an event to all SSE subscribers. Thread-safe."""
     data = json.dumps(event)
     with _sse_lock:
         dead = []
         for q in _sse_subscribers:
             try:
                 q.put_nowait(data)
-            except asyncio.QueueFull:
+            except _queue.Full:
                 dead.append(q)
         for q in dead:
             _sse_subscribers.remove(q)
@@ -239,7 +242,7 @@ def api_config_write(cfg: dict):
         "CFG = {",
     ]
     for k, v in cfg.items():
-        lines.append(f'    "{k}": {v},')
+        lines.append(f'    "{k}": {repr(v)},')
     lines.append("}")
     lines.append("")
     CONFIG_FILE.write_text("\n".join(lines), encoding="utf-8")
@@ -274,20 +277,26 @@ def api_log(n: int = 100):
 
 @app.get("/events")
 async def api_events():
-    """SSE endpoint — pushes metrics and status changes as they happen."""
-    q: asyncio.Queue = asyncio.Queue(maxsize=200)
+    """SSE endpoint — uses thread-safe queue.Queue, polled via asyncio.sleep."""
+    q: _queue.Queue = _queue.Queue(maxsize=200)
     with _sse_lock:
         _sse_subscribers.append(q)
 
     async def stream():
         try:
             yield f"data: {json.dumps({'type': 'status', 'data': _singleton.status()})}\n\n"
+            idle = 0
             while True:
                 try:
-                    msg = await asyncio.wait_for(q.get(), timeout=15)
+                    msg = q.get_nowait()
                     yield f"data: {msg}\n\n"
-                except asyncio.TimeoutError:
-                    yield ": heartbeat\n\n"
+                    idle = 0
+                except _queue.Empty:
+                    await asyncio.sleep(0.25)
+                    idle += 1
+                    if idle >= 60:   # ~15s with no messages → heartbeat
+                        yield ": heartbeat\n\n"
+                        idle = 0
         finally:
             with _sse_lock:
                 try:

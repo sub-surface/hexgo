@@ -241,8 +241,11 @@ function pushMetric(d) {
 api('/api/metrics').then(arr => arr.forEach(pushMetric)).catch(() => {});
 
 // ── SSE stream ────────────────────────────────────────────────────────────────
+let _es = null;
 function connectSSE() {
+  if (_es) { _es.close(); _es = null; }
   const es = new EventSource('/events');
+  _es = es;
   es.onmessage = e => {
     try {
       const msg = JSON.parse(e.data);
@@ -250,7 +253,7 @@ function connectSSE() {
       if (msg.type === 'status')  updateStatus(msg.data);
     } catch(_) {}
   };
-  es.onerror = () => setTimeout(connectSSE, 3000);
+  es.onerror = () => { es.close(); setTimeout(connectSSE, 3000); };
 }
 connectSSE();
 
@@ -337,9 +340,10 @@ async function loadConfig() {
 
 function cfgStage(el) {
   const key = el.dataset.key;
-  const raw = el.value;
+  const raw = el.value.trim();
+  if (raw === '') return;  // ignore empty — don't zero out a value
   const num = Number(raw);
-  _cfgStaged[key] = isNaN(num) ? raw : num;
+  _cfgStaged[key] = (raw !== '' && !isNaN(num)) ? num : raw;
   document.getElementById('config-status').textContent = '● unsaved changes';
 }
 
@@ -533,7 +537,7 @@ function replayDraw() {
     }
     document.getElementById('r-player').textContent = cur === 1 ? 'X' : 'O';
   } else {
-    document.getElementById('r-player').textContent = '&mdash;';
+    document.getElementById('r-player').textContent = '\u2014';
   }
 }
 

@@ -177,16 +177,22 @@ def mcts_policy(game: HexGame, server: InferenceServer, sims: int,
     prev_root on the next call to recycle ~N/branching_factor simulations for free.
     """
     # 1c: Tree reuse — use existing subtree if available
+    # Try to reuse previous subtree; fall back to fresh root if stale or empty
+    reused = False
     if prev_root is not None and prev_root.children:
-        root = prev_root
-        root.parent = None  # detach from old tree
-        moves = [c.move for c in root.children]
-        # Re-apply Dirichlet noise at new root for continued exploration
-        _da, _de = CFG["DIRICHLET_ALPHA"], CFG["DIRICHLET_EPS"]
-        noise = np.random.dirichlet([_da] * len(moves))
-        for c, n in zip(root.children, noise):
-            c.prior = (1 - _de) * c.prior + _de * float(n)
-    else:
+        prev_root.parent = None
+        valid_children = [c for c in prev_root.children if c.move not in game.board]
+        if valid_children:
+            root = prev_root
+            root.children = valid_children
+            moves = [c.move for c in root.children]
+            _da, _de = CFG["DIRICHLET_ALPHA"], CFG["DIRICHLET_EPS"]
+            noise = np.random.dirichlet([_da] * len(moves))
+            for c, n in zip(root.children, noise):
+                c.prior = (1 - _de) * c.prior + _de * float(n)
+            reused = True
+
+    if not reused:
         root = Node(player=game.current_player)
         value, policy = server.evaluate(game)
         moves = game.zoi_moves(ZOI_MARGIN)  # ZOI pruning: ~80-90% branch reduction
@@ -211,10 +217,11 @@ def mcts_policy(game: HexGame, server: InferenceServer, sims: int,
             game.make(*node.move)
             depth += 1
         if game.winner is not None:
-            # node.player just moved and won; backprop convention: +1 = node.player wins
-            v = 1.0
+            v = 1.0 if game.winner == node.player else -1.0
         else:
             v, lp = server.evaluate(game)
+            if node.player != game.current_player:
+                v = -v   # server.evaluate returns from game.current_player's POV
             lmoves = game.zoi_moves(ZOI_MARGIN)
             if lmoves:
                 ll = np.array([lp.get(m, 0.0) for m in lmoves], dtype=np.float32)
