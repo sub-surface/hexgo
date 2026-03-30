@@ -73,15 +73,13 @@ Used only by `NetAgent` during ELO evaluation:
 3. Selection + leaf expansion with net evaluation.
 4. No rollout — net value used directly at leaf.
 
-**Known bug**: leaf children created without `player=game.current_player`
-(defaults to `player=1`). This corrupts backpropagation sign for ~50% of
-Player 2 leaf expansions. Low priority — ELO uses pure `mcts()` for the
-`MCTSAgent` baseline; `mcts_with_net` affects only `NetAgent` ELO matches.
+**Fixed (2026-03-30)**: leaf children now use `player=game.current_player`.
 
-**Terminal sign**: `v = -1.0` at terminal nodes during selection means the
-value is attributed from the perspective of the **node that is about to move**
-(who lost), not the node that just won. This may cause incorrect backprop sign
-for the winning player's node. Needs verification.
+**Fixed (2026-03-30)**: terminal sign — `v = 1.0 if game.winner == node.player else -1.0`.
+
+**Fixed (2026-03-30)**: leaf value perspective — `evaluate()` returns value from
+`game.current_player`'s POV; if `node.player != game.current_player`, value is negated
+to align with the backprop convention (`value` from `node.player`'s perspective).
 
 ---
 
@@ -105,13 +103,7 @@ coverage equals full candidate set.
 
 ## Known Issues
 
-1. **BUG (mcts_with_net)**: Leaf children use `player=1` default instead of
-   `player=game.current_player`. Fix: add `player=game.current_player` to leaf
-   `Node(...)` creation at ~line 191.
+1. **DEAD CODE**: In `mcts()`, `v = 0.0 if game.winner is not None` at line
+   ~124 is immediately overwritten by the terminal check below it. (Low priority.)
 
-2. **POTENTIAL**: Terminal win detection during expansion assigns `v=-1.0` to
-   the node about to move. The backprop sign through the winning node should be
-   verified — there may be a one-level sign error.
-
-3. **DEAD CODE**: In `mcts()`, `v = 0.0 if game.winner is not None` at line
-   ~124 is immediately overwritten by the terminal check below it.
+Previously listed bugs FIX-4 and FIX-5 have been resolved as of 2026-03-30.

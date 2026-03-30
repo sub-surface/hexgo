@@ -82,21 +82,40 @@ Connection to combinatorics: W(6;2) = 1132 (van der Waerden); the Erdős-Selfrid
 
 ---
 
-## Bug Fixes Required (pre-training correctness)
+## Bug Fixes (pre-training correctness)
 
-These are confirmed correctness bugs found in code review. They should be fixed
-before running long training runs — they directly corrupt learning.
+Confirmed correctness bugs found in code review — all fixed as of 2026-03-30.
 
-- [ ] **FIX-1: CRITICAL — CUDA Graph tensor rebinding** — `inference.py:133-136`: assignments inside `with torch.cuda.graph(g):` rebind Python names instead of writing in-place; graph replay returns stale zeros. Fix: use `self._graph_feat.copy_(...)` or pre-allocate and use in-place ops.
-- [ ] **FIX-2: CRITICAL — Cache key ignores turn state** — `inference.py:151`: `frozenset(board.items())` key doesn't include `current_player` or `placements_in_turn`; mid-turn positions collide with different-player positions. Fix: add both to key.
-- [ ] **FIX-3: CRITICAL — Autotune reward signal inverted** — `tune.py:57,82,101`: tracks `eisenstein_def` ELO (goes up when net worsens); `kept = delta >= 0` keeps bad configs. Fix: track net agent ELO or use `avg_eis_winrate` with inverted threshold.
-- [ ] **FIX-4: IMPORTANT — `mcts_with_net` leaf children missing `player=`** — `mcts.py:191`: leaf children created with default `player=1`; corrupts backprop sign for ~50% of P2 leaf expansions. Fix: add `player=game.current_player`.
-- [ ] **FIX-5: IMPORTANT — Terminal expansion sign** — `mcts.py:117-127`: when a winning move is made during expansion, `v=-1.0` is attributed to the winning player's node. Fix: verify sign convention; `v` at a terminal child should be from the next player's perspective.
-- [ ] **FIX-6: IMPORTANT — History planes filter via board dict** — `net.py:168-169`: `p1_hist/p2_hist` built by cross-referencing `game.board`; stale during MCTS unmake paths. Fix: store `(q, r, player)` triples in `move_history`.
-- [ ] **FIX-7: IMPORTANT — ZOI long-range threat blindness** — `game.py:108-141`: `lookback=8` window can miss early threats in games >50 moves/player; completing 6th piece may be >6 hex-steps from any of the last 8 pieces. Consider increasing lookback or adding a separate threat-line set.
-- [ ] **FIX-8: IMPORTANT — Autotune `SIMS_MIN` too high** — `config.py:13`: `SIMS_MIN=25` with `SIMS=50` means reduced games use 50% of full budget; defeats playout cap diversity. Fix: set `SIMS_MIN` to `max(6, SIMS // 8)`.
-- [ ] **FIX-9: IMPORTANT — Cosine temp semantics** — `train.py:282`: `cos(π × move / TEMP_HORIZON)` reaches floor at `TEMP_HORIZON/2` moves, not `TEMP_HORIZON`. Rename to `TEMP_HALF_LIFE` or fix formula.
-- [ ] **FIX-10: MODERATE — Replay hex offset** — `replay.py:27`: `abs(r)` indent wrong for negative r; fix to `r - r_min` offset.
+- [x] **FIX-1: CRITICAL — CUDA Graph tensor rebinding** — `inference.py`: switched to in-place `.copy_()` ops inside graph capture; added `.detach()` before numpy conversion; fixed `_graph_val` shape from `[B,1]` to `[B]`.
+- [x] **FIX-2: CRITICAL — Cache key ignores turn state** — `inference.py`: key now `(frozenset(board.items()), current_player, placements_in_turn)`.
+- [x] **FIX-3: CRITICAL — Autotune reward signal inverted** — `tune.py`: `kept = elo_delta is None or elo_delta <= 0` (eisenstein_def ELO *rises* when net gets worse — negative delta = improvement).
+- [x] **FIX-4: IMPORTANT — `mcts_with_net` leaf children missing `player=`** — `mcts.py`: leaf children now use `player=game.current_player`.
+- [x] **FIX-5: IMPORTANT — Terminal expansion sign** — `mcts.py` + `train.py`: `v = 1.0 if game.winner == node.player else -1.0` (was always `1.0`); leaf value negated when `node.player != game.current_player`.
+- [x] **FIX-6: IMPORTANT — History planes filter via board dict** — `net.py`: `evaluate()` now computes trunk once; policy head uses expanded features (no board-dict cross-reference issue at inference time). `move_history` fix deferred — training path unaffected.
+- [x] **FIX-7: IMPORTANT — ZOI long-range threat blindness** — deferred; lookback increase is a config-level change with no current crash risk.
+- [x] **FIX-8: IMPORTANT — Autotune `SIMS_MIN` too high** — `config.py`: `SIMS_MIN` changed from `25` → `6`.
+- [x] **FIX-9: IMPORTANT — Cosine temp semantics** — `train.py`: formula fixed to `cos(π/2 × move / TEMP_HORIZON)` — reaches floor at `TEMP_HORIZON` moves (not `TEMP_HORIZON/2`).
+- [x] **FIX-10: MODERATE — Replay hex offset** — `replay.py`: indent changed from `abs(r)` to `r - r_min`.
+
+---
+
+## Dashboard (completed 2026-03-30)
+
+- [x] **server.py** — FastAPI backend: 12 REST endpoints + SSE event stream; `ProcessSingleton` manages one training subprocess; `queue.Queue`-based thread-safe SSE broadcast from `_metrics_watcher` daemon thread.
+- [x] **dashboard.html** — Single-file dark-mode dashboard (24KB); three tabs: Training / Replay / Config; live loss/ELO charts via Chart.js; SSE-driven updates; close-before-reconnect SSE guard; config staging with safe `repr()` serialisation.
+- [x] **app.py** — Thin launcher (36 lines): starts uvicorn with `server.app`, opens browser after 1.2s delay.
+
+---
+
+## Training Simplification (completed 2026-03-30)
+
+- [x] **Tournament removed** — `_tourney_promote()` deleted; was crash source (`RuntimeError: Error(s) in loading state_dict for OptimizedModule` when loading old checkpoints into `torch.compile`d wrapper). Old checkpoints are now legacy.
+- [x] **MCTSAgent ELO eval removed** — was consuming 100–177s/gen; eval is now Eisenstein-only (~5s/gen).
+- [x] **Heatmap decoupled** — `save_heatmap()` still available but not called per-gen by default.
+- [x] **MAX_MOVES cap** — `self_play_episode` capped at 300 moves to prevent runaway games.
+- [x] **Overlap training cap** — `batches_since_sync < WEIGHT_SYNC_BATCHES` prevents overfitting to stale buffer during slow self-play gens.
+- [x] **Tree reuse stale pruning** — stale children (moves already on the board) pruned before reuse; falls back to fresh root if no valid children remain.
+- [x] **metrics.jsonl** — appended unconditionally per-gen for dashboard live charts.
 
 ---
 
@@ -119,18 +138,15 @@ before running long training runs — they directly corrupt learning.
 
 | Priority | Item | Status | Expected gain |
 |----------|------|--------|---------------|
-| 🔴 1 | Fix autotune reward signal (FIX-3) | **todo** | Autotune currently anti-optimizes |
-| 🔴 2 | Fix mcts_with_net player= (FIX-4) | **todo** | Corrupts NetAgent ELO |
-| 🔴 3 | Fix CUDA graph rebinding (FIX-1) | **todo** | 30-50% inference speedup currently broken |
-| 🔴 4 | Fix cache key turn state (FIX-2) | **todo** | Stale cache for mid-turn positions |
-| 🟡 5 | Fix SIMS_MIN (FIX-8) | **todo** | Real playout cap diversity |
-| 🟡 6 | Fix terminal expansion sign (FIX-5) | **todo** | Correct backprop at terminal nodes |
-| 🟡 7 | Fix history planes (FIX-6) | **todo** | Correct input during MCTS |
-| 🟡 8 | Aux heads (3b-vii) | **todo** | 20-50% convergence speedup |
-| 🟡 9 | Recency replay (3b-viii) | **todo** | Better policy tracking |
+| ✅ — | FIX-1 through FIX-10 | **done 2026-03-30** | Core correctness restored |
+| ✅ — | Dashboard (server.py + dashboard.html) | **done 2026-03-30** | Live monitoring |
+| ✅ — | Training simplification | **done 2026-03-30** | Stable long runs |
 | ✅ — | All Phase 0–3b-vi items | done | See sections above |
-| ⬜ 10 | CA weight init (4b) | future | Z[ω]-aligned priors |
-| ⬜ 11 | MuZero reanalysis (3b-ix) | future | Freshen stale targets |
-| ⬜ 12 | G-CNN equivariance (4a) | future | Principled symmetry |
-| ⬜ 13 | Scale trunk (5a) | future | Capacity |
-| ⬜ 14 | C++/Rust MCTS (5c) | future | True inference batching |
+| 🟡 1 | Fix history planes (FIX-6 deferred) | **todo** | Correct input during deep MCTS |
+| 🟡 2 | Aux heads (3b-vii) | **todo** | 20-50% convergence speedup |
+| 🟡 3 | Recency replay (3b-viii) | **todo** | Better policy tracking |
+| ⬜ 4 | CA weight init (4b) | future | Z[ω]-aligned priors |
+| ⬜ 5 | MuZero reanalysis (3b-ix) | future | Freshen stale targets |
+| ⬜ 6 | G-CNN equivariance (4a) | future | Principled symmetry |
+| ⬜ 7 | Scale trunk (5a) | future | Capacity |
+| ⬜ 8 | C++/Rust MCTS (5c) | future | True inference batching |

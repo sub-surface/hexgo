@@ -349,7 +349,17 @@ def train_batch(net: HexNet, optimizer, scaler, buffer: deque) -> dict:
     if len(buffer) < BATCH_SIZE:
         return {}
 
-    batch = random.sample(buffer, BATCH_SIZE)
+    # 3b-viii: Recency-weighted sampling — 75% from recent half, 25% uniform.
+    # Prevents the net from being anchored to its own early, incompetent play.
+    rw = CFG["RECENCY_WEIGHT"]
+    buf_list = list(buffer)
+    n_recent = max(1, len(buf_list) // 2)
+    recent_half = buf_list[-n_recent:]
+    n_from_recent = int(BATCH_SIZE * rw)
+    n_from_all    = BATCH_SIZE - n_from_recent
+    batch = (random.sample(recent_half, min(n_from_recent, len(recent_half))) +
+             random.sample(buf_list,    min(n_from_all,    len(buf_list))))
+    random.shuffle(batch)
     # D6 augmentation: apply a random symmetry transform to each sample.
     # All 12 D6 elements are equally likely; identity (tf=0) is one of them.
     # Board array and move coordinates are transformed consistently, so the

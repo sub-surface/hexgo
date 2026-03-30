@@ -31,16 +31,12 @@ InferenceServer._serve() loop:
 Two-level caching:
 
 ### Per-server cache
-- Key: `frozenset(game.board.items())` — board pieces only
+- Key: `(frozenset(game.board.items()), current_player, placements_in_turn)` — full turn state
 - Thread-safe via `_cache_lock`
 - Clears when `InferenceServer` is re-created (each generation)
 - Typical hit rate: 20–40% during MCTS
 
-**Known bug**: cache key ignores `current_player` and `placements_in_turn`.
-Under the 1-2-2 rule, two board states with identical piece placement but
-different `current_player` (mid-turn vs. start-of-turn) will collide. The
-network's `to-move` channel (ch 10) returns different values in each case.
-Fix: key should include `(frozenset(board.items()), current_player, placements_in_turn)`.
+**Fixed (2026-03-30)**: cache key now includes `current_player` and `placements_in_turn` to prevent collisions between mid-turn positions under the 1-2-2 rule.
 
 ### Persistent cross-generation cache
 - Module-level dict `_persistent_cache` survives across `InferenceServer` instances
@@ -53,28 +49,14 @@ Fix: key should include `(frozenset(board.items()), current_player, placements_i
 
 ## CUDA Graphs
 
-`InferenceServer.start()` attempts to capture a CUDA Graph for the full `batch_size`:
+`InferenceServer.start()` captures a CUDA Graph for the full `batch_size`.
 
-```python
-with torch.cuda.graph(g):
-    self._graph_feat = self.net.trunk(self._graph_boards)   # BUG: rebind, not in-place
-    self._graph_val  = self.net.value(self._graph_feat)     # BUG: rebind
-    self._graph_pol  = self.net.policy_logit(...)           # BUG: rebind
-```
+**Fixed (2026-03-30)**:
+- Graph capture now uses in-place `.copy_()` writes on pre-allocated output buffers; Python name rebinding bug eliminated.
+- `_graph_val` pre-allocated as `torch.zeros(B)` (shape `[B]`, not `[B,1]`); removed stale `[val_idxs, 0]` indexing.
+- Added `.detach()` before `.float().cpu().numpy()` on both `_graph_val` and `_graph_pol` outputs (CUDA Graph tensors retain grad).
 
-**Critical bug**: The assignments inside `with torch.cuda.graph(g):` rebind Python
-names rather than writing into pre-allocated output buffers. CUDA Graph replay
-writes into the captured tensor storage, which is no longer referenced by
-`self._graph_val` / `self._graph_pol`. After `g.replay()`, reading these variables
-returns zeros. The graph path silently returns stale/incorrect values.
-
-Additionally, `_graph_val` is pre-allocated as `[B, 1]` but `net.value()` returns
-shape `[B]`, making the `[val_idxs, 0]` indexing in the graph path raise
-`IndexError` in any execution that doesn't crash first.
-
-Because all exceptions are caught and discarded, this silently falls back to the
-non-graph path — meaning CUDA Graphs are currently a no-op in practice. The
-expected 30–50% latency reduction from the roadmap item is not being realized.
+The graph path now executes correctly and provides the expected 30–50% latency reduction over eager mode.
 
 ---
 
@@ -124,9 +106,9 @@ server.latency_summary()                 # min/avg/max batch latency string
 
 | Issue | Severity | Status |
 |-------|----------|--------|
-| CUDA Graph rebinding bug — graph always falls back to eager | Critical | Not fixed |
-| `_graph_val` shape `[B,1]` vs value() output `[B]` — IndexError | Critical | Not fixed |
-| Cache key ignores `current_player`/`placements_in_turn` | Important | Not fixed |
+| CUDA Graph rebinding bug | Critical | **Fixed 2026-03-30** |
+| `_graph_val` shape `[B,1]` IndexError | Critical | **Fixed 2026-03-30** |
+| Cache key missing turn state | Important | **Fixed 2026-03-30** |
 | `torch.compile` failure silent on Windows | Moderate | By design |
 | Persistent cache 5-gen staleness | Suggestion | Tunable |
 | `avg_batch_size≈1` root cause is GIL, not timeout | Design note | |

@@ -2,14 +2,15 @@
 
 ## Pipeline Overview
 
-Each generation:
+Each generation (as of 2026-03-30 simplification):
 1. **Self-play** — 8 parallel workers generate games using the current net via `InferenceServer`
-2. **Overlap training** — batches sampled from the replay buffer run concurrently with self-play
+2. **Overlap training** — batches sampled from the replay buffer run concurrently with self-play (capped at `WEIGHT_SYNC_BATCHES` to prevent overfit)
 3. **Post-gen training** — additional batches to reach `max(10, positions//BATCH_SIZE)` total
-4. **ELO evaluation** — new net vs `EisensteinGreedyAgent(defensive=True)` (and `mcts_50` when not in tune mode)
-5. **Checkpoint tournament** — new net must beat ≥55% of top-K saved checkpoints (not in tune mode)
-6. **Heatmap** — policy distribution over a fixed 10-move test position saved as PNG
-7. **Checkpoint** — `net_gen{N:04d}.pt` + `net_latest.pt`
+4. **ELO evaluation** — new net vs `EisensteinGreedyAgent(defensive=True)` only (~5s/gen)
+5. **Checkpoint** — `net_gen{N:04d}.pt` + `net_latest.pt`
+6. **Metrics** — appended to `metrics.jsonl` for dashboard live charts
+
+*Removed: checkpoint tournament (crash source), MCTSAgent eval (100–177s/gen), per-gen heatmap server. `save_heatmap()` still available manually.*
 
 ---
 
@@ -79,9 +80,13 @@ L = MSE(z, v) + CE(π, p) + c‖θ‖²
 
 ---
 
-## Checkpoint Tournament (`_tourney_promote`)
+## Checkpoint Tournament (REMOVED)
 
-Maintains a pool of the top-K (`CKPT_POOL_K=5`) saved nets. New net must win ≥55% of games against the pool to become the training policy. Prevents catastrophic forgetting. Skipped in `--tune` mode.
+`_tourney_promote()` was removed in 2026-03-30. Root cause: `torch.load` of old
+`net_gen*.pt` files into a `torch.compile`d (`OptimizedModule`) wrapper raised
+`RuntimeError: Error(s) in loading state_dict`. The crash happened silently after
+checkpoint save, making it appear to be an ELO eval crash. Old `net_gen*.pt` files
+are now treated as legacy and quarantined in `checkpoints/legacy/`.
 
 ---
 
@@ -96,12 +101,10 @@ Per-generation timing for: `self_play`, `overlap_train`, `post_train`, `checkpoi
 
 ## Known Issues
 
-1. **SIMS_MIN=25 too high**: With SIMS=50, `SIMS//8=6`, so `max(25, 6)=25`. The "reduced" games use half the full budget — this defeats the purpose of playout cap randomization. Should be ~6–10 for real diversity.
+1. **Policy loss normalization**: Normalized by item count (positions with ≥1 in-window move), not move count. Loss magnitude varies with window clip rate, which correlates with board geometry and D6 augmentation angle. (Low priority — consistent across gens.)
 
-2. **Cosine temp semantics**: The formula `cos(π × move / TEMP_HORIZON)` goes negative at `move > TEMP_HORIZON/2` and clamps to 0.05, so the floor is reached at `TEMP_HORIZON/2` moves, not `TEMP_HORIZON`. The parameter should be renamed `TEMP_HALF_LIFE` or the formula adjusted.
-
-3. **Overlap training can overtrain**: The overlap loop calls `train_batch` on every 50ms timeout regardless of new data arriving. On slow self-play generations this can over-fit to the current buffer before new games arrive. Should cap overlap batches.
-
-4. **`d6_augment_sample` probs copy**: `probs` is passed by reference. Downstream in-place modification would corrupt buffer entries. Should use `.copy()`.
-
-5. **Policy loss normalization**: Normalized by item count (positions with ≥1 in-window move), not move count. Loss magnitude varies with window clip rate, which correlates with board geometry and D6 augmentation angle.
+Previously listed issues (1–4 above) have been resolved as of 2026-03-30:
+- `SIMS_MIN` set to `6`
+- Cosine temp formula fixed to `cos(π/2 × move / TEMP_HORIZON)`
+- Overlap training capped by `WEIGHT_SYNC_BATCHES`
+- D6 augmentation uses `probs.copy()`

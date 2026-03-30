@@ -227,7 +227,7 @@ class InferenceServer:
         """Run one batched forward pass for all requests."""
         # Each request may have multiple moves (one row per move in the batch)
         # We stack: all moves from all requests into one big tensor
-        board_rows = []    # [3, S, S] repeated per move
+        board_rows = []    # [11, S, S] repeated per move
         move_planes = []   # [1, S, S] per move
         request_slices = []  # (start, end, resp_queue, moves, value_idx, cache_key)
 

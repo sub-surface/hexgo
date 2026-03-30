@@ -335,14 +335,14 @@ class HexNet(nn.Module):
         move_planes: [B, 1, S, S]  — 1-hot move location
         returns:     [B] scalar logits
         """
-        p = self.p_conv(features).flatten(1)     # [B, 2*S*S]
+        p = self.p_conv(features).flatten(1)     # [B, 4*S*S]
         m = move_planes.flatten(1)               # [B, S*S]
         return self.p_fc(torch.cat([p, m], dim=1)).squeeze(-1)  # [B]
 
     def forward(self, board_tensor: torch.Tensor,
                 move_planes: torch.Tensor | None = None):
         """
-        board_tensor: [B, 3, S, S]
+        board_tensor: [B, 11, S, S]
         move_planes:  [B, 1, S, S] or None (value-only mode)
         Returns: (value [B], policy_logit [B]) or (value [B], None)
         """
