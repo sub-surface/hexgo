@@ -14,6 +14,13 @@ checkpoints/legacy/*.pt
 # Logs
 *.log
 train.log
+hexgo.log
+metrics.jsonl
+tune_log.jsonl
+tune_result.json
+
+# Backup files
+*.bak
 
 # Claude Code local config
 .claude/
