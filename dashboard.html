@@ -21,6 +21,7 @@
     --p2:       #1a6fb5;
     --font:     'Courier New', monospace;
   }
+  html, body { height: 100%; overflow: hidden; }
   body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 13px; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
 
   /* Tab bar */
@@ -157,9 +158,9 @@
 </div>
 
 <!-- Config tab -->
-<div class="tabpanel" id="tab-config" style="padding:14px; overflow:auto;">
-  <div class="row" style="max-width:800px; flex-wrap:wrap; gap:12px;">
-    <div class="panel col" style="flex:1; min-width:280px;">
+<div class="tabpanel" id="tab-config" style="padding:12px; overflow-y:auto;">
+  <div class="row" style="flex-wrap:wrap; gap:10px; align-items:flex-start;">
+    <div class="panel col" style="flex:1; min-width:260px;">
       <div class="panel-title">HYPERPARAMETERS</div>
       <div id="config-fields" class="col" style="gap:10px;"></div>
       <div class="row" style="margin-top:14px; gap:8px; align-items:center;">
@@ -169,7 +170,7 @@
       </div>
       <div style="margin-top:8px; color:var(--dim); font-size:11px;">Changes are staged until APPLY. Takes effect on next training run.</div>
     </div>
-    <div class="panel col" style="flex:1; min-width:280px;">
+    <div class="panel col" style="flex:1; min-width:260px;">
       <div class="panel-title">PARAMETER GUIDE</div>
       <div id="config-guide" style="color:var(--dim); font-size:11px; line-height:1.7;"></div>
     </div>
@@ -454,9 +455,10 @@ const HEX_COLORS = {
 function replayDraw() {
   const canvas = document.getElementById('replay-canvas');
   const ctx = canvas.getContext('2d');
-  // Resize canvas to match display size
-  canvas.width  = canvas.offsetWidth  || 600;
-  canvas.height = canvas.offsetHeight || 400;
+  // Size canvas to its absolutely-positioned parent wrapper
+  const wrapper = canvas.parentElement;
+  canvas.width  = wrapper.clientWidth  || 600;
+  canvas.height = wrapper.clientHeight || 400;
 
   const W = canvas.width, H = canvas.height;
   ctx.fillStyle = HEX_COLORS.bg;

@@ -38,7 +38,7 @@ from torch import optim
 
 from game import HexGame
 from inference import InferenceServer, evict_stale_cache
-from mcts import Node
+from mcts import Node, _backprop
 from net import HexNet, encode_board, encode_move, DEVICE, param_count, d6_augment_sample
 from elo import ELO, NetAgent, EisensteinGreedyAgent, run_match
 from config import CFG
