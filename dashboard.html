@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HexGo Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg:       #0d1117;
+    --surface:  #161b22;
+    --border:   #21262d;
+    --text:     #e6edf3;
+    --dim:      #7d8590;
+    --accent:   #388bfd;
+    --green:    #3fb950;
+    --orange:   #d29922;
+    --red:      #f85149;
+    --p1:       #e8a020;
+    --p2:       #1a6fb5;
+    --font:     'Courier New', monospace;
+  }
+  body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 13px; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+  /* Tab bar */
+  #tabbar { display: flex; border-bottom: 1px solid var(--border); background: var(--surface); padding: 0 16px; gap: 2px; flex-shrink: 0; }
+  .tab { padding: 10px 20px; cursor: pointer; border-bottom: 2px solid transparent; color: var(--dim); transition: color .15s, border-color .15s; user-select: none; }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  #title { margin-left: auto; padding: 10px 0; color: var(--dim); letter-spacing: 3px; font-size: 11px; }
+
+  /* Tab content */
+  .tabpanel { display: none; flex: 1; overflow: hidden; }
+  .tabpanel.active { display: flex; }
+
+  /* Shared layout primitives */
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 14px; }
+  .panel-title { color: var(--dim); font-size: 10px; letter-spacing: 2px; margin-bottom: 10px; }
+  .row { display: flex; gap: 12px; }
+  .col { display: flex; flex-direction: column; gap: 12px; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; }
+  .badge-green { background: #1a3a1e; color: var(--green); }
+  .badge-red   { background: #3a1a1a; color: var(--red); }
+  .badge-dim   { background: var(--border); color: var(--dim); }
+  btn, button { background: var(--border); color: var(--text); border: 1px solid #30363d; border-radius: 4px; padding: 6px 14px; cursor: pointer; font-family: var(--font); font-size: 12px; transition: background .15s; }
+  button:hover { background: #21262d; }
+  button.primary { background: #1f3a6e; border-color: var(--accent); color: var(--accent); }
+  button.primary:hover { background: #2a4a8e; }
+  button.danger { background: #3a1a1a; border-color: var(--red); color: var(--red); }
+  button.danger:hover { background: #4a2020; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  input[type=number], input[type=text], select {
+    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    border-radius: 4px; padding: 5px 8px; font-family: var(--font); font-size: 12px; width: 100%;
+  }
+  input:focus, select:focus { outline: none; border-color: var(--accent); }
+  label { color: var(--dim); font-size: 11px; margin-bottom: 3px; display: block; }
+  .stat-row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--border); }
+  .stat-row:last-child { border-bottom: none; }
+  .stat-key { color: var(--dim); }
+  .stat-val { color: var(--text); font-weight: bold; }
+</style>
+</head>
+<body>
+
+<div id="tabbar">
+  <div class="tab active" data-tab="training">Training</div>
+  <div class="tab" data-tab="replay">Replay</div>
+  <div class="tab" data-tab="config">Config</div>
+  <div id="title">HEXGO</div>
+</div>
+
+<!-- Training tab -->
+<div class="tabpanel active" id="tab-training" style="padding:14px; gap:12px; overflow:auto;">
+  <!-- row 1: controls + status -->
+  <div class="row" style="flex-shrink:0;">
+    <div class="panel col" style="flex:0 0 220px;">
+      <div class="panel-title">CONTROLS</div>
+      <div class="col" style="gap:8px;">
+        <div><label>Generations</label><input type="number" id="c-gens" value="50" min="1" max="9999"></div>
+        <div><label>Games / gen</label><input type="number" id="c-games" value="20" min="1" max="200"></div>
+        <div><label>Sims / move</label><input type="number" id="c-sims" value="100" min="5" max="2000"></div>
+      </div>
+      <div class="row" style="margin-top:10px; gap:8px;">
+        <button class="primary" id="btn-start" onclick="trainStart()">&#9654; START</button>
+        <button class="danger"  id="btn-stop"  onclick="trainStop()" disabled>&#9632; STOP</button>
+      </div>
+    </div>
+    <div class="panel col" style="flex:1;">
+      <div class="panel-title">STATUS</div>
+      <div id="status-badge" class="badge badge-dim">IDLE</div>
+      <div id="status-stats" style="margin-top:8px;"></div>
+    </div>
+    <div class="panel col" style="flex:1;">
+      <div class="panel-title">LAST GEN</div>
+      <div id="last-gen-stats"></div>
+    </div>
+  </div>
+  <!-- row 2: charts -->
+  <div class="row" style="flex:1; min-height:0;">
+    <div class="panel" style="flex:1; min-height:0;">
+      <div class="panel-title">LOSS</div>
+      <canvas id="chart-loss"></canvas>
+    </div>
+    <div class="panel" style="flex:1; min-height:0;">
+      <div class="panel-title">EIS WINRATE</div>
+      <canvas id="chart-eis"></canvas>
+    </div>
+    <div class="panel" style="flex:1; min-height:0;">
+      <div class="panel-title">ENTROPY</div>
+      <canvas id="chart-ent"></canvas>
+    </div>
+  </div>
+  <!-- row 3: log tail -->
+  <div class="panel" style="flex-shrink:0; max-height:160px;">
+    <div class="panel-title">TRAIN LOG <span style="float:right;cursor:pointer;color:var(--accent)" onclick="refreshLog()">&#8635;</span></div>
+    <pre id="log-tail" style="color:var(--dim); font-size:11px; overflow-y:auto; max-height:120px; white-space:pre-wrap;"></pre>
+  </div>
+</div>
+
+<!-- Replay tab -->
+<div class="tabpanel" id="tab-replay" style="padding:14px; gap:12px; overflow:hidden;">
+  <div class="row" style="flex:1; min-height:0;">
+    <!-- file list -->
+    <div class="panel col" style="flex:0 0 220px; overflow:hidden;">
+      <div class="panel-title">REPLAYS <span style="float:right;cursor:pointer;color:var(--accent)" onclick="loadReplayList()">&#8635;</span></div>
+      <div id="replay-list" style="overflow-y:auto; flex:1; gap:4px; display:flex; flex-direction:column;"></div>
+    </div>
+    <!-- board -->
+    <div class="panel col" style="flex:1; align-items:center;">
+      <div class="panel-title" id="replay-title">SELECT A REPLAY</div>
+      <canvas id="replay-canvas" style="flex:1; width:100%; max-height:100%;"></canvas>
+    </div>
+    <!-- controls + info -->
+    <div class="panel col" style="flex:0 0 200px;">
+      <div class="panel-title">PLAYBACK</div>
+      <div class="stat-row"><span class="stat-key">Move</span><span class="stat-val" id="r-move">&mdash;</span></div>
+      <div class="stat-row"><span class="stat-key">Player</span><span class="stat-val" id="r-player">&mdash;</span></div>
+      <div class="stat-row"><span class="stat-key">Winner</span><span class="stat-val" id="r-winner">&mdash;</span></div>
+      <div class="stat-row"><span class="stat-key">Total moves</span><span class="stat-val" id="r-total">&mdash;</span></div>
+      <div style="margin-top:12px;">
+        <label>Speed (ms/move)</label>
+        <input type="number" id="r-speed" value="300" min="50" max="2000">
+      </div>
+      <input type="range" id="r-scrub" min="0" value="0" style="width:100%; margin:10px 0; accent-color:var(--accent);">
+      <div class="row" style="flex-wrap:wrap; gap:6px; margin-top:4px;">
+        <button onclick="replayStep(-1)">&#9664;</button>
+        <button onclick="replayStep(1)">&#9654;</button>
+        <button onclick="replayTogglePlay()" id="r-playbtn">&#9654;&#9654;</button>
+        <button onclick="replayReset()">&#8634;</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Config tab -->
+<div class="tabpanel" id="tab-config" style="padding:14px; overflow:auto;">
+  <div class="row" style="max-width:800px; flex-wrap:wrap; gap:12px;">
+    <div class="panel col" style="flex:1; min-width:280px;">
+      <div class="panel-title">HYPERPARAMETERS</div>
+      <div id="config-fields" class="col" style="gap:10px;"></div>
+      <div class="row" style="margin-top:14px; gap:8px; align-items:center;">
+        <button class="primary" onclick="configApply()">&#10003; APPLY TO config.py</button>
+        <button onclick="configReset()">&#8634; RESET</button>
+        <span id="config-status" style="color:var(--dim); font-size:11px;"></span>
+      </div>
+      <div style="margin-top:8px; color:var(--dim); font-size:11px;">Changes are staged until APPLY. Takes effect on next training run.</div>
+    </div>
+    <div class="panel col" style="flex:1; min-width:280px;">
+      <div class="panel-title">PARAMETER GUIDE</div>
+      <div id="config-guide" style="color:var(--dim); font-size:11px; line-height:1.7;"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Tab switching ─────────────────────────────────────────────────────────────
+document.querySelectorAll('.tab').forEach(t => {
+  t.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+    document.querySelectorAll('.tabpanel').forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    document.getElementById('tab-' + t.dataset.tab).classList.add('active');
+    if (t.dataset.tab === 'replay') loadReplayList();
+    if (t.dataset.tab === 'config') loadConfig();
+  });
+});
+
+// ── Shared fetch helper ───────────────────────────────────────────────────────
+async function api(path, opts={}) {
+  const r = await fetch(path, opts);
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+// ── Charts setup ──────────────────────────────────────────────────────────────
+const CHART_OPTS = (label, color) => ({
+  type: 'line',
+  data: { labels: [], datasets: [{ label, data: [], borderColor: color,
+    backgroundColor: color + '22', borderWidth: 1.5, pointRadius: 2, tension: 0.3 }] },
+  options: {
+    animation: false, responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { ticks: { color: '#7d8590', font: { family: 'Courier New', size: 10 } }, grid: { color: '#21262d' } },
+      y: { ticks: { color: '#7d8590', font: { family: 'Courier New', size: 10 } }, grid: { color: '#21262d' } },
+    }
+  }
+});
+
+const chartLoss = new Chart(document.getElementById('chart-loss'), CHART_OPTS('loss', '#388bfd'));
+const chartEis  = new Chart(document.getElementById('chart-eis'),  CHART_OPTS('eis_wr', '#3fb950'));
+const chartEnt  = new Chart(document.getElementById('chart-ent'),  CHART_OPTS('entropy', '#d29922'));
+
+function pushMetric(d) {
+  const gen = String(d.gen);
+  [chartLoss, chartEis, chartEnt].forEach(c => {
+    if (!c.data.labels.includes(gen)) c.data.labels.push(gen);
+  });
+  const idx = chartLoss.data.labels.indexOf(gen);
+  chartLoss.data.datasets[0].data[idx] = d.avg_loss;
+  chartEis.data.datasets[0].data[idx]  = d.eis_winrate;
+  chartEnt.data.datasets[0].data[idx]  = d.avg_ent;
+  [chartLoss, chartEis, chartEnt].forEach(c => c.update('none'));
+
+  // last gen stats
+  document.getElementById('last-gen-stats').innerHTML = `
+    <div class="stat-row"><span class="stat-key">Gen</span><span class="stat-val">${d.gen}</span></div>
+    <div class="stat-row"><span class="stat-key">Loss</span><span class="stat-val">${d.avg_loss ?? '&mdash;'}</span></div>
+    <div class="stat-row"><span class="stat-key">Eis WR</span><span class="stat-val">${d.eis_winrate ?? '&mdash;'}</span></div>
+    <div class="stat-row"><span class="stat-key">Buffer</span><span class="stat-val">${d.buffer_size ?? '&mdash;'}</span></div>
+    <div class="stat-row"><span class="stat-key">Gen time</span><span class="stat-val">${d.gen_time_s ?? '&mdash;'}s</span></div>
+  `;
+}
+
+// Load historical metrics on startup
+api('/api/metrics').then(arr => arr.forEach(pushMetric)).catch(() => {});
+
+// ── SSE stream ────────────────────────────────────────────────────────────────
+function connectSSE() {
+  const es = new EventSource('/events');
+  es.onmessage = e => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'metrics') pushMetric(msg.data);
+      if (msg.type === 'status')  updateStatus(msg.data);
+    } catch(_) {}
+  };
+  es.onerror = () => setTimeout(connectSSE, 3000);
+}
+connectSSE();
+
+// ── Status panel ──────────────────────────────────────────────────────────────
+function updateStatus(s) {
+  const badge = document.getElementById('status-badge');
+  const stats = document.getElementById('status-stats');
+  const start = document.getElementById('btn-start');
+  const stop  = document.getElementById('btn-stop');
+
+  if (s.state === 'running') {
+    badge.className = 'badge badge-green'; badge.textContent = '● RUNNING';
+    start.disabled = true; stop.disabled = false;
+    stats.innerHTML = `<div class="stat-row"><span class="stat-key">PID</span><span class="stat-val">${s.pid}</span></div>
+      <div class="stat-row"><span class="stat-key">Elapsed</span><span class="stat-val">${s.elapsed_s}s</span></div>`;
+  } else {
+    badge.className = 'badge badge-dim'; badge.textContent = 'IDLE';
+    start.disabled = false; stop.disabled = true;
+    stats.innerHTML = s.returncode !== undefined
+      ? `<div class="stat-row"><span class="stat-key">Exit code</span><span class="stat-val">${s.returncode}</span></div>` : '';
+  }
+}
+// Poll status every 5s (SSE handles fast updates; this is a fallback)
+setInterval(() => api('/api/status').then(updateStatus).catch(() => {}), 5000);
+api('/api/status').then(updateStatus).catch(() => {});
+
+// ── Training controls ─────────────────────────────────────────────────────────
+async function trainStart() {
+  const gens  = document.getElementById('c-gens').value;
+  const games = document.getElementById('c-games').value;
+  const sims  = document.getElementById('c-sims').value;
+  try {
+    await api(`/api/train/start?gens=${gens}&games=${games}&sims=${sims}`, {method:'POST'});
+  } catch(e) { alert('Start failed: ' + e.message); }
+}
+async function trainStop() {
+  try { await api('/api/train/stop', {method:'POST'}); }
+  catch(e) { alert('Stop failed: ' + e.message); }
+}
+
+// ── Log tail ──────────────────────────────────────────────────────────────────
+async function refreshLog() {
+  try {
+    const data = await api('/api/log?n=60');
+    document.getElementById('log-tail').textContent = data.lines.join('\n');
+  } catch(_) {}
+}
+setInterval(refreshLog, 3000);
+refreshLog();
+
+// ── Config tab ────────────────────────────────────────────────────────────────
+const CONFIG_GUIDE = {
+  LR:                 'Adam learning rate',
+  WEIGHT_DECAY:       'L2 regularisation weight',
+  BATCH_SIZE:         'Training batch size',
+  SIMS:               'Full MCTS sim budget (25% of games)',
+  SIMS_MIN:           'Reduced sim budget floor (75% of games) — keep << SIMS',
+  CAP_FULL_FRAC:      'Fraction of games using full SIMS',
+  CPUCT:              'PUCT exploration constant',
+  DIRICHLET_ALPHA:    'Root Dirichlet noise concentration',
+  DIRICHLET_EPS:      'Root Dirichlet noise weight',
+  ZOI_MARGIN:         'Zone-of-influence pruning radius (hex distance)',
+  TD_GAMMA:           'TD-lambda discount for value targets',
+  TEMP_HORIZON:       'Cosine temp annealing full-life (moves)',
+  WEIGHT_SYNC_BATCHES:'Batches between weight sync to inference server',
+};
+let _cfgStaged = null;
+
+async function loadConfig() {
+  const cfg = await api('/api/config');
+  _cfgStaged = Object.assign({}, cfg);
+  const fields = document.getElementById('config-fields');
+  fields.innerHTML = '';
+  const guide = document.getElementById('config-guide');
+  guide.innerHTML = Object.entries(CONFIG_GUIDE).map(([k,v]) =>
+    `<div><span style="color:var(--text)">${k}</span>: ${v}</div>`).join('');
+  for (const [k, v] of Object.entries(cfg)) {
+    const wrap = document.createElement('div');
+    wrap.innerHTML = `<label>${k}</label>
+      <input type="text" id="cfg-${k}" value="${v}" data-key="${k}" oninput="cfgStage(this)">`;
+    fields.appendChild(wrap);
+  }
+}
+
+function cfgStage(el) {
+  const key = el.dataset.key;
+  const raw = el.value;
+  const num = Number(raw);
+  _cfgStaged[key] = isNaN(num) ? raw : num;
+  document.getElementById('config-status').textContent = '● unsaved changes';
+}
+
+function configReset() {
+  loadConfig();
+  document.getElementById('config-status').textContent = '';
+}
+
+async function configApply() {
+  try {
+    await api('/api/config', { method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(_cfgStaged) });
+    document.getElementById('config-status').textContent = '✓ saved';
+    setTimeout(() => document.getElementById('config-status').textContent = '', 2000);
+  } catch(e) {
+    document.getElementById('config-status').textContent = '✗ ' + e.message;
+  }
+}
+
+// ── Replay tab ────────────────────────────────────────────────────────────────
+let _replayData   = null;   // full replay JSON
+let _replayIdx    = 0;      // current move index (0 = empty board)
+let _replayBoard  = {};     // (q,r) -> player
+let _replayTimer  = null;   // auto-play interval ID
+let _replayPlaying = false;
+
+async function loadReplayList() {
+  const list = await api('/api/replays');
+  const el = document.getElementById('replay-list');
+  el.innerHTML = '';
+  list.forEach(name => {
+    const btn = document.createElement('div');
+    btn.textContent = name.replace('game_','').replace('.json','');
+    btn.style.cssText = 'padding:5px 8px;cursor:pointer;border-radius:4px;color:var(--dim);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+    btn.title = name;
+    btn.onclick = () => loadReplay(name);
+    el.appendChild(btn);
+  });
+}
+
+async function loadReplay(filename) {
+  _replayData = await api('/api/replay/' + filename);
+  _replayIdx = 0;
+  _replayBoard = {};
+  replayStopPlay();
+  const total = _replayData.moves.length;
+  document.getElementById('r-total').textContent = total;
+  document.getElementById('r-winner').textContent =
+    _replayData.winner === 1 ? 'X' : _replayData.winner === 2 ? 'O' : 'draw';
+  document.getElementById('replay-title').textContent =
+    filename.replace('game_','').replace('.json','');
+  const scrub = document.getElementById('r-scrub');
+  scrub.max = total;
+  scrub.value = 0;
+  scrub.oninput = () => replayJump(parseInt(scrub.value));
+  replayDraw();
+}
+
+function replayJump(idx) {
+  if (!_replayData) return;
+  _replayIdx = Math.max(0, Math.min(idx, _replayData.moves.length));
+  // Rebuild board from scratch up to idx
+  _replayBoard = {};
+  let cur = 1, placed = 0;
+  for (let i = 0; i < _replayIdx; i++) {
+    const [q, r] = _replayData.moves[i];
+    _replayBoard[`${q},${r}`] = cur;
+    placed++;
+    const limit = (i < 1) ? 1 : 2;
+    if (placed >= limit) { cur = 3 - cur; placed = 0; }
+  }
+  document.getElementById('r-scrub').value = _replayIdx;
+  replayDraw();
+}
+
+function replayStep(delta) {
+  if (!_replayData) return;
+  replayJump(_replayIdx + delta);
+}
+
+function replayReset() { replayJump(0); }
+
+function replayTogglePlay() {
+  if (_replayPlaying) { replayStopPlay(); return; }
+  _replayPlaying = true;
+  document.getElementById('r-playbtn').textContent = '⏸';
+  function tick() {
+    if (!_replayPlaying || !_replayData) return;
+    if (_replayIdx >= _replayData.moves.length) { replayStopPlay(); return; }
+    replayStep(1);
+    const ms = parseInt(document.getElementById('r-speed').value) || 300;
+    _replayTimer = setTimeout(tick, ms);
+  }
+  tick();
+}
+
+function replayStopPlay() {
+  _replayPlaying = false;
+  document.getElementById('r-playbtn').textContent = '▶▶';
+  if (_replayTimer) { clearTimeout(_replayTimer); _replayTimer = null; }
+}
+
+// ── Hex canvas renderer ───────────────────────────────────────────────────────
+const HEX_COLORS = {
+  bg:    '#0d1117', gridLine: '#1e2a38',
+  p1:    '#e8a020', p1b: '#ffcc66',
+  p2:    '#1a6fb5', p2b: '#66aaee',
+  empty: '#141c26', emptyB: '#1e2a38',
+  last:  '#ffffff',
+};
+
+function replayDraw() {
+  const canvas = document.getElementById('replay-canvas');
+  const ctx = canvas.getContext('2d');
+  // Resize canvas to match display size
+  canvas.width  = canvas.offsetWidth  || 600;
+  canvas.height = canvas.offsetHeight || 400;
+
+  const W = canvas.width, H = canvas.height;
+  ctx.fillStyle = HEX_COLORS.bg;
+  ctx.fillRect(0, 0, W, H);
+
+  if (!_replayData) return;
+
+  // Determine board extent from all moves
+  const allMoves = _replayData.moves;
+  if (!allMoves.length) return;
+  const qs = allMoves.map(m => m[0]);
+  const rs = allMoves.map(m => m[1]);
+  const qMin = Math.min(...qs) - 1, qMax = Math.max(...qs) + 1;
+  const rMin = Math.min(...rs) - 1, rMax = Math.max(...rs) + 1;
+
+  // Auto-fit hex size
+  const cols = qMax - qMin + 1, rows = rMax - rMin + 1;
+  const size = Math.max(8, Math.min(30, Math.floor(Math.min(W / (cols * 1.6), H / (rows * 1.2)))));
+  const ox = W / 2 - (size * 1.5 * ((qMin + qMax) / 2));
+  const oy = H / 2 - (size * Math.sqrt(3) * ((rMin + rMax) / 2 + (qMin + qMax) / 4));
+
+  function hexToPixel(q, r) {
+    return [ox + size * 1.5 * q, oy + size * Math.sqrt(3) * (r + q / 2)];
+  }
+  function hexPath(cx, cy, s) {
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const a = Math.PI / 180 * 60 * i;
+      const x = cx + (s - 1) * Math.cos(a), y = cy + (s - 1) * Math.sin(a);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+  }
+
+  const lastMove = _replayIdx > 0 ? _replayData.moves[_replayIdx - 1] : null;
+
+  // Draw background cells
+  for (let q = qMin; q <= qMax; q++) {
+    for (let r = rMin; r <= rMax; r++) {
+      const [cx, cy] = hexToPixel(q, r);
+      const key = `${q},${r}`;
+      const p = _replayBoard[key];
+      hexPath(cx, cy, size);
+      if (p == null) {
+        ctx.fillStyle = HEX_COLORS.empty;
+        ctx.strokeStyle = HEX_COLORS.emptyB;
+        ctx.lineWidth = 0.5;
+      } else {
+        ctx.fillStyle = p === 1 ? HEX_COLORS.p1 : HEX_COLORS.p2;
+        const isLast = lastMove && lastMove[0] === q && lastMove[1] === r;
+        ctx.strokeStyle = isLast ? HEX_COLORS.last : (p === 1 ? HEX_COLORS.p1b : HEX_COLORS.p2b);
+        ctx.lineWidth = isLast ? 2.5 : 1;
+      }
+      ctx.fill(); ctx.stroke();
+      if (p != null) {
+        ctx.fillStyle = p === 1 ? HEX_COLORS.p1b : HEX_COLORS.p2b;
+        ctx.font = `bold ${Math.max(6, Math.floor(size * 0.6))}px Courier New`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(p === 1 ? 'X' : 'O', cx, cy);
+      }
+    }
+  }
+
+  // Update info
+  const move = _replayIdx;
+  document.getElementById('r-move').textContent = move;
+  if (move > 0) {
+    let cur = 1, placed = 0;
+    for (let i = 0; i < move - 1; i++) {
+      placed++;
+      if (placed >= (i < 1 ? 1 : 2)) { cur = 3 - cur; placed = 0; }
+    }
+    document.getElementById('r-player').textContent = cur === 1 ? 'X' : 'O';
+  } else {
+    document.getElementById('r-player').textContent = '&mdash;';
+  }
+}
+
+// Resize canvas when window resizes
+window.addEventListener('resize', () => { if (_replayData) replayDraw(); });
+</script>
+</body>
+</html>
