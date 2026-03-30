@@ -125,7 +125,7 @@ def d6_augment_sample(sample: dict, tf_idx: int) -> dict:
         'board': new_board,
         'oq': 0, 'or_': 0,
         'moves': new_moves,
-        'probs': sample['probs'],   # probability order matches move order
+        'probs': sample['probs'].copy(),   # copy to prevent in-place normalization corrupting buffer
         'z':     sample['z'],
     }
 
@@ -163,10 +163,17 @@ def encode_board(game: HexGame, size: int = BOARD_SIZE) -> np.ndarray:
         if 0 <= qi < size and 0 <= ri < size:
             arr[p - 1, ri, qi] = 1.0
 
-    # 4c: history planes — last N_HISTORY placements per player, most recent first
-    # game.board maps (q,r)->player so we can split move_history by player safely
-    p1_hist = [m for m in reversed(game.move_history) if game.board.get(m) == 1][:N_HISTORY]
-    p2_hist = [m for m in reversed(game.move_history) if game.board.get(m) == 2][:N_HISTORY]
+    # 4c: history planes — last N_HISTORY placements per player, most recent first.
+    # Use player_history (parallel to move_history) so the split is correct even
+    # during MCTS tree traversal after unmake() has removed pieces from the board.
+    p1_hist, p2_hist = [], []
+    for m, mp in zip(reversed(game.move_history), reversed(game.player_history)):
+        if mp == 1 and len(p1_hist) < N_HISTORY:
+            p1_hist.append(m)
+        elif mp == 2 and len(p2_hist) < N_HISTORY:
+            p2_hist.append(m)
+        if len(p1_hist) >= N_HISTORY and len(p2_hist) >= N_HISTORY:
+            break
     for i, (q, r) in enumerate(p1_hist):
         qi = q - oq + half
         ri = r - or_ + half

@@ -81,17 +81,20 @@ def _expand(node: Node, game: HexGame):
 
 def _backprop(node: Node, value: float):
     """
-    Backpropagate value: +1 for player who just moved if they win.
-    value is from perspective of the player to move at the terminal/leaf state.
+    Backpropagate value upward through the tree.
+
+    Convention: `value` is from the perspective of the player who is to move
+    AT the node passed in (i.e. positive means that player is winning).
+
+    Sign flip: negate whenever the parent's player differs from the child's
+    player. This correctly handles the 1-2-2 turn rule where the same player
+    makes two consecutive placements without a sign flip between them.
     """
     while node is not None:
         node.visits += 1
         node.value += value
-        
-        if node.parent:
-            # If parent has a different player, negate value for parent's perspective
-            if node.parent.player != node.player:
-                value = -value
+        if node.parent and node.parent.player != node.player:
+            value = -value
         node = node.parent
 
 
@@ -121,10 +124,14 @@ def mcts(game: HexGame, num_simulations: int = 200) -> tuple[int, int]:
                 game.make(*node.move)
                 depth += 1
 
-        v = 0.0 if game.winner is not None else _rollout(game)
         if game.winner is not None:
-            # Terminal: value from the perspective of the node that just moved
-            v = -1.0  # whoever is to move now, the previous player won
+            # node.player is the player who just moved (and won).
+            # Convention: v is from node.player's perspective → +1.0 = winner.
+            v = 1.0
+        else:
+            # _rollout returns +1 if game.current_player (the NEXT player) wins.
+            # Convention needs v from node.player's perspective → negate.
+            v = -_rollout(game)
 
         # Restore game state
         for _ in range(depth):
@@ -163,7 +170,8 @@ def mcts_with_net(game: HexGame, net, num_simulations: int = 100,
     noise = np.random.dirichlet([dirichlet_alpha] * len(moves))
     priors = (1 - dirichlet_eps) * priors + dirichlet_eps * noise
 
-    root.children = [Node(move=m, parent=root, prior=float(p))
+    root.children = [Node(move=m, parent=root, prior=float(p),
+                          player=game.current_player)
                      for m, p in zip(moves, priors)]
 
     for _ in range(num_simulations):
@@ -178,7 +186,10 @@ def mcts_with_net(game: HexGame, net, num_simulations: int = 100,
 
         # Leaf evaluation
         if game.winner is not None:
-            v = -1.0   # current player lost (previous player just won)
+            # node.player is the player who just moved (and won).
+            # _backprop convention: value is from node.player's perspective.
+            # +1.0 = node.player won.
+            v = 1.0
         else:
             # Expand with net
             v, leaf_policy = evaluate(net, game)
@@ -188,7 +199,8 @@ def mcts_with_net(game: HexGame, net, num_simulations: int = 100,
                 llogits -= llogits.max()
                 lpriors = np.exp(llogits)
                 lpriors /= lpriors.sum()
-                node.children = [Node(move=m, parent=node, prior=float(p))
+                node.children = [Node(move=m, parent=node, prior=float(p),
+                                      player=game.current_player)
                                   for m, p in zip(leaf_moves, lpriors)]
 
         for _ in range(depth):

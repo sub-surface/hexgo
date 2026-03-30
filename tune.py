@@ -98,7 +98,9 @@ def run_trial(gens: int = 5, games: int = 10) -> dict:
         avg_eis_winrate = round(sum(rates) / len(rates), 3) if rates else None
 
     # 7. Build log entry
-    kept = elo_delta is None or elo_delta >= 0
+    # eisenstein_def ELO rises when the net loses more to Eisenstein (net is WORSE).
+    # A good config lowers eisenstein_def ELO (net improves). Keep when delta <= 0.
+    kept = elo_delta is None or elo_delta <= 0
     entry = {
         "cfg":             cfg,
         "elo_before":      elo_before,

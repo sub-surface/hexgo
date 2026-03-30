@@ -8,7 +8,9 @@
     "pool_net_gen0001": 1170.0272764197698,
     "net_gen0003": 1144.6575783797102,
     "net_gen0004": 1153.997978915438,
-    "net_gen0005": 1161.11741489952
+    "net_gen0005": 1161.11741489952,
+    "net_gen0006": 1229.1953024918978,
+    "pool_net_gen0003": 1170.8046975081022
   },
   "history": [
     {
@@ -779,6 +781,39 @@
       "ratings": {
         "net_gen0005": 1161.1,
         "eisenstein_def": 1403.7
+      }
+    },
+    {
+      "a": "net_gen0006",
+      "b": "pool_net_gen0003",
+      "winner": "net_gen0006",
+      "moves": 80,
+      "duration": 8.3,
+      "ratings": {
+        "net_gen0006": 1216.0,
+        "pool_net_gen0003": 1184.0
+      }
+    },
+    {
+      "a": "net_gen0006",
+      "b": "pool_net_gen0003",
+      "winner": null,
+      "moves": 300,
+      "duration": 78.58,
+      "ratings": {
+        "net_gen0006": 1214.5,
+        "pool_net_gen0003": 1185.5
+      }
+    },
+    {
+      "a": "net_gen0006",
+      "b": "pool_net_gen0003",
+      "winner": "net_gen0006",
+      "moves": 93,
+      "duration": 42.65,
+      "ratings": {
+        "net_gen0006": 1229.2,
+        "pool_net_gen0003": 1170.8
       }
     }
   ]

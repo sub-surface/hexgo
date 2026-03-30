@@ -24,7 +24,7 @@ def render(board: dict, last_move: tuple | None, move_num: int, total: int):
 
     print(f"\n── Move {move_num}/{total} ──")
     for r in range(r_min, r_max + 1):
-        indent = " " * abs(r)
+        indent = " " * (r - r_min)
         row = []
         for q in range(q_min, q_max + 1):
             p = board.get((q, r))

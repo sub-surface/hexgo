@@ -9,7 +9,7 @@ evaluation. The server collects requests from all games, batches them into one
 GPU call, and returns results. GPU utilisation goes from ~1% to ~N%.
 
 Throughput scales roughly linearly with num_workers until GPU is saturated.
-RTX 2060 with our 355K-param net: expect useful gains up to ~16 workers.
+RTX 2060 with our ~121K-param net: expect useful gains up to ~16 workers.
 
 Usage:
     server = InferenceServer(net, batch_size=8, timeout_ms=5)
@@ -60,7 +60,8 @@ class InferenceServer:
                                         name="inference")
         self._running = False
         # Per-server cache (fast path); persistent cache shared across servers
-        self.cache: dict[frozenset, tuple[float, dict]] = {}
+        # Key: (frozenset(board.items()), current_player, placements_in_turn)
+        self.cache: dict[tuple, tuple[float, dict]] = {}
         self._cache_lock = threading.Lock()
         # Latency tracking: list of (batch_size, latency_ms) per batch
         self._batch_latencies: list[tuple[int, float]] = []
@@ -103,40 +104,51 @@ class InferenceServer:
         self._thread.start()
 
     def _try_capture_cuda_graph(self):
-        """Capture a CUDA graph for the full-batch inference path."""
+        """Capture a CUDA graph for the full-batch inference path.
+
+        CUDA Graphs require all outputs to be written in-place into pre-allocated
+        static tensors. The captured kernels write into the SAME tensor objects
+        every replay. We use copy_() inside the graph context for this.
+        """
         try:
             S = BOARD_SIZE
             from net import IN_CH
             B = self.batch_size
-            # Static input tensors (will be filled before each replay)
+            # Static input/output tensors — must be allocated BEFORE capture
             self._graph_boards = torch.zeros(B, IN_CH, S, S, device="cuda",
                                              dtype=torch.float16)
             self._graph_moves  = torch.zeros(B, 1, S, S, device="cuda",
                                              dtype=torch.float16)
-            # Warm-up pass (required before graph capture)
+            # Warm-up passes (required to initialise cuBLAS etc. before capture)
             self.net.eval()
-            with torch.amp.autocast(device_type="cuda"):
-                with torch.no_grad():
+            with torch.no_grad():
+                with torch.amp.autocast(device_type="cuda"):
                     for _ in range(3):
-                        f = self.net.trunk(self._graph_boards)
-                        _ = self.net.value(f[[0]])
-                        _ = self.net.policy_logit(f, self._graph_moves)
+                        _f = self.net.trunk(self._graph_boards)
+                        self.net.value(_f[[0]])
+                        self.net.policy_logit(_f, self._graph_moves)
             torch.cuda.synchronize()
-            # Capture
+            # Pre-allocate output buffers (static — graph writes into these)
+            with torch.no_grad():
+                with torch.amp.autocast(device_type="cuda"):
+                    _f0 = self.net.trunk(self._graph_boards)
+            self._graph_feat = _f0.clone()      # static feature buffer [B, C, H, W]
+            self._graph_val  = torch.zeros(B, device="cuda")   # value output [B]
+            self._graph_pol  = torch.zeros(B, device="cuda")   # policy output [B]
+            # Capture — all ops must write in-place into the pre-allocated buffers
             g = torch.cuda.CUDAGraph()
-            self._graph_feat = torch.zeros_like(
-                self.net.trunk(self._graph_boards).detach())
-            self._graph_val  = torch.zeros(B, 1, device="cuda")
-            self._graph_pol  = torch.zeros(B, device="cuda")
             with torch.cuda.graph(g):
                 with torch.amp.autocast(device_type="cuda"):
-                    self._graph_feat = self.net.trunk(self._graph_boards)
-                    self._graph_val  = self.net.value(self._graph_feat)
-                    self._graph_pol  = self.net.policy_logit(
-                        self._graph_feat, self._graph_moves)
+                    self._graph_feat.copy_(self.net.trunk(self._graph_boards))
+                    self._graph_val.copy_(self.net.value(self._graph_feat))
+                    self._graph_pol.copy_(
+                        self.net.policy_logit(self._graph_feat, self._graph_moves))
             self._cuda_graph = g
         except Exception as e:
-            # Non-fatal: fall back to normal forward pass
+            # Non-fatal: fall back to eager forward pass
+            import logging
+            logging.getLogger(__name__).warning(
+                "CUDA Graph capture failed (%s) — using eager path", e)
             self._cuda_graph = None
 
     def stop(self):
@@ -148,7 +160,9 @@ class InferenceServer:
         Thread-safe. Encodes the game state, submits to batch queue, blocks
         until inference completes. Returns (value, {move: logit}).
         """
-        key = frozenset(game.board.items())
+        # Include turn state: positions with same pieces but different current_player
+        # or placements_in_turn (mid-turn under 1-2-2 rule) are distinct game states.
+        key = (frozenset(game.board.items()), game.current_player, game.placements_in_turn)
         # 1. Per-server cache (fastest)
         with self._cache_lock:
             if key in self.cache:
@@ -265,8 +279,8 @@ class InferenceServer:
             torch.cuda.synchronize()
             # Slice to actual N rows
             val_idxs = [s for s, e, r, m, k in request_slices]
-            values  = self._graph_val[val_idxs, 0].float().cpu().numpy()
-            logits  = self._graph_pol[:N].float().cpu().numpy()
+            values  = self._graph_val[val_idxs].detach().float().cpu().numpy()
+            logits  = self._graph_pol[:N].detach().float().cpu().numpy()
         else:
             # pin_memory for async host→GPU transfer on CUDA
             if _CUDA:

@@ -10,7 +10,7 @@ CFG = {
 
     # Self-play search
     "SIMS":                 50,       # full sim budget (25% of games)
-    "SIMS_MIN":             25,       # reduced budget floor (75% of games)
+    "SIMS_MIN":             6,        # reduced budget floor (75% of games) — must be << SIMS for playout-cap diversity
     "CAP_FULL_FRAC":        0.25,     # fraction of games at full SIMS
     "CPUCT":                1.0,      # PUCT exploration constant
     "DIRICHLET_ALPHA":      0.3,      # root noise concentration

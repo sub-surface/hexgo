@@ -38,9 +38,9 @@ from torch import optim
 
 from game import HexGame
 from inference import InferenceServer, evict_stale_cache
-from mcts import Node, _backprop
+from mcts import Node
 from net import HexNet, encode_board, encode_move, DEVICE, param_count, d6_augment_sample
-from elo import ELO, NetAgent, MCTSAgent, EisensteinGreedyAgent, run_match
+from elo import ELO, NetAgent, EisensteinGreedyAgent, run_match
 from config import CFG
 
 _CUDA = "cuda" in str(DEVICE)
@@ -134,11 +134,6 @@ WEIGHT_DECAY  = CFG["WEIGHT_DECAY"]
 SIMS_MIN      = CFG["SIMS_MIN"]
 ZOI_MARGIN    = CFG["ZOI_MARGIN"]
 CAP_FULL_FRAC = CFG["CAP_FULL_FRAC"]
-
-# 2c: Checkpoint tournament
-TOURNEY_THRESHOLD = 0.55
-TOURNEY_POOL_K    = 3
-TOURNEY_GAMES_K   = 4
 
 
 def _cap_sims(target: int) -> int:
@@ -260,12 +255,13 @@ def self_play_episode(server: InferenceServer, sims: int, temp_horizon: int = 40
     adversary: optional Agent (e.g. EisensteinGreedyAgent) that controls
         adversary_player instead of the net — curriculum training partner.
     """
+    MAX_MOVES = 300   # placements; beyond this declare draw to prevent runaway games
     game = HexGame()
     positions = []
     prev_root = None
     move_num = 0
 
-    while game.winner is None:
+    while game.winner is None and len(game.move_history) < MAX_MOVES:
         legal = game.legal_moves()
         if not legal:
             break
@@ -524,50 +520,6 @@ def load_latest(net: HexNet) -> int:
     return 0
 
 
-# ── Checkpoint tournament ────────────────────────────────────────────────────
-
-def _tourney_promote(net: HexNet, gen: int, sims: int, elo: ELO) -> bool:
-    """
-    2c: Run new net against top-K recent checkpoints.
-    Returns True (and saves net_latest.pt) if win_rate >= TOURNEY_THRESHOLD.
-    On gen<=1 or no pool available, always promotes.
-    """
-    pool_paths = sorted(CHECKPOINT_DIR.glob("net_gen*.pt"))
-    # Exclude the checkpoint we just saved (current gen)
-    pool_paths = [p for p in pool_paths if f"gen{gen:04d}" not in p.stem]
-    pool_paths = pool_paths[-TOURNEY_POOL_K:]  # most recent K
-
-    if not pool_paths:
-        return True  # no pool yet → auto-promote
-
-    wins, total = 0, 0
-    net_agent = NetAgent(net, sims=max(25, sims // 2), name=f"net_gen{gen:04d}")
-
-    for p in pool_paths:
-        old_net = HexNet().to(DEVICE)
-        try:
-            # old_net is fresh, no torch.compile yet, but use pattern for safety
-            target = old_net._orig_mod if hasattr(old_net, "_orig_mod") else old_net
-            target.load_state_dict(torch.load(p, map_location=DEVICE))
-        except (RuntimeError, KeyError):
-            continue  # skip incompatible checkpoint silently
-        old_agent = NetAgent(old_net, sims=max(25, sims // 2),
-                             name=f"pool_{p.stem}")
-        result = run_match(net_agent, old_agent, n_games=TOURNEY_GAMES_K,
-                           elo=elo, verbose=False)
-        wins  += result.get(f"wins_{net_agent.name}", 0)
-        total += TOURNEY_GAMES_K
-
-    if total == 0:
-        return True
-
-    win_rate = wins / total
-    log.info("  Tournament: %d/%d (%.0f%%) vs pool of %d — %s",
-             wins, total, 100 * win_rate, len(pool_paths),
-             "PROMOTED" if win_rate >= TOURNEY_THRESHOLD else "held")
-    return win_rate >= TOURNEY_THRESHOLD
-
-
 # ── Main training loop ────────────────────────────────────────────────────────
 
 def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20, tune_mode: bool = False):
@@ -710,45 +662,16 @@ def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20, tune_mode:
         save(net, gen)
         perf.stop("checkpoint")
 
-        # 2c: Checkpoint tournament (skipped in tune mode)
-        perf.start("tournament")
-        if not tune_mode:
-            if not _tourney_promote(net, gen, cur_sims, elo):
-                prev_best = sorted(CHECKPOINT_DIR.glob("net_gen*.pt"))
-                prev_best = [p for p in prev_best if f"gen{gen:04d}" not in p.stem]
-                if prev_best:
-                    try:
-                        target = net._orig_mod if hasattr(net, "_orig_mod") else net
-                        target.load_state_dict(torch.load(prev_best[-1], map_location=DEVICE))
-                        log.info("  Reverted to %s as training policy", prev_best[-1].name)
-                    except (RuntimeError, KeyError):
-                        pass
-        perf.stop("tournament")
-
-        # ELO evaluation
+        # ELO evaluation — Eisenstein only (fast greedy, no MCTS overhead)
         perf.start("eval")
         net_agent = NetAgent(net, sims=max(25, sims // 2), name=f"net_gen{gen:04d}")
-        if not tune_mode:
-            baseline  = MCTSAgent(sims=50)
-            match     = run_match(net_agent, baseline, n_games=EVAL_GAMES, elo=elo, verbose=False)
-            net_wins  = match.get(f"wins_{net_agent.name}", 0)
-            log.info("  ELO eval vs mcts_50: win_rate=%.2f  ELO=%s",
-                     net_wins / EVAL_GAMES, elo.leaderboard()[:3])
-
         eis_agent = EisensteinGreedyAgent(name="eisenstein_def", defensive=True)
         eis_n     = EVAL_GAMES // 2
         eis_match = run_match(net_agent, eis_agent, n_games=eis_n, elo=elo, verbose=False)
         eis_wins  = eis_match.get(f"wins_{net_agent.name}", 0)
-        log.info("  ELO eval vs eisenstein_def: win_rate=%.2f", eis_wins / eis_n)
+        log.info("  ELO eval vs eisenstein_def: win_rate=%.2f  ELO=%s",
+                 eis_wins / eis_n, elo.leaderboard()[:3])
         perf.stop("eval")
-
-        # Policy heatmap
-        perf.start("heatmap")
-        heatmap_server = InferenceServer(net, batch_size=1, timeout_ms=100)
-        heatmap_server.start()
-        save_heatmap(heatmap_server, gen)
-        heatmap_server.stop()
-        perf.stop("heatmap")
 
         # Write per-gen result for tune.py to consume
         if tune_mode:

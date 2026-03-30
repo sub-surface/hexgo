@@ -1,5 +1,5 @@
 """
-Hexagonal Tic-Tac-Toe — 6-in-a-row wins on an infinite hex grid.
+Hexagonal Connect6 — 6-in-a-row wins on an infinite hex grid.
 
 Coordinate system: axial (q, r) — flat-top hexagons.
 Neighbors of (q,r): (±1,0), (0,±1), (1,-1), (-1,1)
@@ -8,6 +8,7 @@ Optimisations:
 - `candidates` set maintained incrementally — no full-board scan for legal_moves()
 - `make()`/`unmake()` for zero-copy tree traversal in MCTS
 - win check only walks the 3 axes through the last-placed piece
+- `move_history` stores (q, r); `player_history` stores the player who made each move
 """
 
 WIN_LENGTH = 6
@@ -30,6 +31,7 @@ class HexGame:
         self.placements_in_turn: int = 0  # how many tiles placed in current turn
         self.winner: int | None = None
         self.move_history: list[tuple[int, int]] = []
+        self.player_history: list[int] = []  # player who made each move in move_history
         # undo stack: each entry = (move, removed_candidates, added_candidates, prev_placements, prev_winner, prev_player)
         self._undo: list[tuple] = []
 
@@ -46,6 +48,7 @@ class HexGame:
 
         self.board[(q, r)] = self.current_player
         self.move_history.append((q, r))
+        self.player_history.append(self.current_player)
 
         # Update candidates incrementally
         removed = set()
@@ -88,6 +91,7 @@ class HexGame:
         q, r, removed, added, prev_placements, prev_winner, prev_player = self._undo.pop()
         del self.board[(q, r)]
         self.move_history.pop()
+        self.player_history.pop()
         self.candidates -= added
         self.candidates |= removed
         self.winner = prev_winner
@@ -176,6 +180,7 @@ class HexGame:
         g.placements_in_turn = self.placements_in_turn
         g.winner = self.winner
         g.move_history = list(self.move_history)
+        g.player_history = list(self.player_history)
         g._undo = []
         return g
 
