@@ -34,7 +34,7 @@ _CUDA = torch.cuda.is_available()
 # Persistent cross-generation cache. Entries are (value, policy, gen_added).
 # Pass this dict to InferenceServer to keep evaluations across weight updates.
 # Eviction: entries older than CACHE_MAX_AGE generations are removed at gen start.
-CACHE_MAX_AGE = 5
+CACHE_MAX_AGE = 2
 _persistent_cache: dict = {}   # key → (value, policy, gen)
 _persistent_cache_lock = threading.Lock()
 
@@ -158,14 +158,19 @@ class InferenceServer:
             self._batch_latencies.append((len(batch), lat_ms))
 
     def _process_batch(self, batch: list):
-        """Run one batched forward pass for all requests."""
-        # Each request may have multiple moves (one row per move in the batch)
-        # We stack: all moves from all requests into one big tensor
-        board_rows = []    # [11, S, S] repeated per move
-        move_planes = []   # [1, S, S] per move
-        request_slices = []  # (start, end, resp_queue, moves, value_idx, cache_key)
+        """Run one batched forward pass for all requests.
 
-        for board_arr, moves, oq, or_, key, resp in batch:
+        Key optimisation: trunk runs once per board (batch of B boards), not once
+        per (board × move) pair. The policy head is then applied with features
+        broadcast per-request, keeping the expensive trunk pass at B=8 instead
+        of B=8*~100_moves=800. This is the dominant factor in inference latency.
+        """
+        request_slices = []  # (board_idx, resp, valid_moves, key)
+        board_arrs = []
+        all_planes = []      # [1, S, S] per move, all requests concatenated
+        feat_row_idx = []    # which board (0..B-1) each move plane belongs to
+
+        for i, (board_arr, moves, oq, or_, key, resp) in enumerate(batch):
             valid_moves = []
             planes = []
             for m in moves:
@@ -173,57 +178,50 @@ class InferenceServer:
                 if p is not None:
                     valid_moves.append(m)
                     planes.append(p)
-            
-            n = len(valid_moves)
-            start = len(board_rows)
-            for board_arr_p, p in zip([board_arr] * n, planes):
-                board_rows.append(board_arr_p)
-                move_planes.append(p)
-            request_slices.append((start, start + n, resp, valid_moves, key))
+            board_arrs.append(board_arr)
+            request_slices.append((i, resp, valid_moves, key))
+            all_planes.extend(planes)
+            feat_row_idx.extend([i] * len(planes))
 
-        if not board_rows:
-            # All moves in all requests were clipped (extremely rare)
-            for board_arr, moves, oq, or_, key, resp in batch:
-                # Still need a value head estimate
-                net_in = torch.tensor(board_arr, device=DEVICE).unsqueeze(0)
-                with torch.no_grad():
-                    v = self.net.value(self.net.trunk(net_in)).item()
-                res = (float(v), {})
-                with self._cache_lock:
-                    self.cache[key] = res
-                resp.put(res)
-            return
-
-        N = len(board_rows)
-        boards_np = np.stack(board_rows)
-        moves_np  = np.stack(move_planes)
-
+        # Trunk pass: B boards (not B*N_moves)
+        boards_np = np.stack(board_arrs)
         self.net.eval()
-        # pin_memory for async host→GPU transfer on CUDA
         if _CUDA:
             boards_t = (torch.from_numpy(boards_np).pin_memory()
                         .to(DEVICE, non_blocking=True))
-            moves_t  = (torch.from_numpy(moves_np).pin_memory()
-                        .to(DEVICE, non_blocking=True))
         else:
             boards_t = torch.tensor(boards_np, device=DEVICE)
-            moves_t  = torch.tensor(moves_np,  device=DEVICE)
+
+        # Build move tensors outside autocast — they are float32 inputs, not computed tensors
+        pol_t = None
+        if all_planes:
+            moves_np = np.stack(all_planes)
+            if _CUDA:
+                moves_t = (torch.from_numpy(moves_np).pin_memory()
+                           .to(DEVICE, non_blocking=True))
+            else:
+                moves_t = torch.tensor(moves_np, device=DEVICE)
+            row_idx = torch.tensor(feat_row_idx, dtype=torch.long, device=DEVICE)
+
         dev_type = "cuda" if _CUDA else "cpu"
         with torch.amp.autocast(device_type=dev_type):
             with torch.no_grad():
-                features = self.net.trunk(boards_t)
-                val_idxs = [s for s, e, r, m, k in request_slices]
-                val_t = self.net.value(features[val_idxs])
-                pol_t = self.net.policy_logit(features, moves_t)
-        values  = val_t.float().cpu().numpy()
-        logits  = pol_t.float().cpu().numpy()
+                features = self.net.trunk(boards_t)          # [B, C, S, S]
+                val_t    = self.net.value(features)           # [B]
+                if all_planes:
+                    pol_t = self.net.policy_logit(features[row_idx], moves_t)  # [M]
 
-        for i, (start, end, resp, moves, key) in enumerate(request_slices):
-            policy = {m: float(logits[start + j]) for j, m in enumerate(moves)}
-            res = (float(values[i]), policy)
+        values = val_t.float().cpu().numpy()
+        logits = pol_t.float().cpu().numpy() if pol_t is not None else np.array([])
+
+        offset = 0
+        for i, (board_idx, resp, valid_moves, key) in enumerate(request_slices):
+            n = len(valid_moves)
+            policy = {m: float(logits[offset + j]) for j, m in enumerate(valid_moves)}
+            offset += n
+            res = (float(values[board_idx]), policy)
             with self._cache_lock:
                 self.cache[key] = res
-            # Write through to persistent cache
             with _persistent_cache_lock:
-                _persistent_cache[key] = (float(values[i]), policy, self.gen)
+                _persistent_cache[key] = (float(values[board_idx]), policy, self.gen)
             resp.put(res)

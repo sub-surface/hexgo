@@ -2,7 +2,7 @@
 HexNet — ResNet policy+value network for hexagonal 6-in-a-row.
 
 Architecture (configured via config.py CFG):
-  - Input: 11 × 18 × 18 axial grid centered on recent-move centroid (3 state + 8 history)
+  - Input: 17 × 18 × 18 axial grid centered on recent-move centroid (3 state + 8 history + 6 axis-chain)
   - Trunk: CFG["TRUNK_BLOCKS"] residual blocks, CFG["TRUNK_CHANNELS"] channels
     Default: 4 blocks × 64 channels. KataGo-style global pool after trunk.
   - Value head: board → scalar win probability ∈ [-1, 1]
@@ -20,13 +20,13 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from game import HexGame
+from game import HexGame, AXES, WIN_LENGTH
 from config import CFG
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 BOARD_SIZE = 18          # increased from 15 (sees more of the infinite grid)
 N_HISTORY = 4            # 4c: history planes per player (last N moves)
-IN_CH = 3 + 2 * N_HISTORY  # p1, p2, to_move + 4 p1-history + 4 p2-history = 11
+IN_CH = 3 + 2 * N_HISTORY + 6  # p1, p2, to_move + 4 p1-history + 4 p2-history + 6 axis-chain planes = 17
 N_RECENT = 20            # recent moves used to center the board window (tracks active play area)
 
 # Architecture sizes — read from CFG so they are tunable without code changes.
@@ -168,12 +168,25 @@ def encode_board(game: HexGame, size: int = BOARD_SIZE) -> np.ndarray:
     Returns float32 array [IN_CH, size, size] centered on centroid of all pieces.
     If board empty, centers at (0,0).
 
-    Channel layout (IN_CH = 11):
+    Channel layout (IN_CH = 17):
       0   — player 1 current pieces
       1   — player 2 current pieces
       2   — to-move plane (0.0=p1, 1.0=p2)
       3-6 — player 1 last N_HISTORY moves (most recent = ch 3), one-hot each
       7-10— player 2 last N_HISTORY moves (most recent = ch 7), one-hot each
+      11  — MY axis-0 (1,0):  chain length current player would join, normalised to [0,1]
+      12  — MY axis-1 (0,1):  chain length current player would join, normalised to [0,1]
+      13  — MY axis-2 (1,-1): chain length current player would join, normalised to [0,1]
+      14  — OPP axis-0 (1,0):  chain length opponent would join, normalised to [0,1]
+      15  — OPP axis-1 (0,1):  chain length opponent would join, normalised to [0,1]
+      16  — OPP axis-2 (1,-1): chain length opponent would join, normalised to [0,1]
+
+    The axis decomposition encodes the Eisenstein integer structure directly: each
+    empty candidate cell carries three independent chain signals (one per Z[omega]
+    unit direction) rather than a single collapsed maximum.  The network receives
+    the full per-axis potential and learns to weight threats across all three
+    Eisenstein axes, instead of discovering the axes from value targets alone.
+    Values clipped at 1.0 so immediate wins (chain >= WIN_LENGTH) are always max.
     """
     half = size // 2
     if game.move_history:
@@ -219,6 +232,29 @@ def encode_board(game: HexGame, size: int = BOARD_SIZE) -> np.ndarray:
         ri = r - or_ + half
         if 0 <= qi < size and 0 <= ri < size:
             arr[7 + i, ri, qi] = 1.0
+
+    # Axis-chain planes 11-16: Eisenstein axis decomposition.
+    # For each empty candidate cell, compute the chain length along each of the
+    # three Z[omega] unit axes independently, for both current player and opponent.
+    # Values are normalised by WIN_LENGTH and clipped to [0, 1] so a value of 1.0
+    # means placing here would complete or extend a winning chain.
+    me  = game.current_player
+    opp = 3 - me
+    for (q, r) in game.candidates:
+        qi = q - oq + half
+        ri = r - or_ + half
+        if not (0 <= qi < size and 0 <= ri < size):
+            continue
+        for player, ch_base in ((me, 11), (opp, 14)):
+            for axis_idx, (dq, dr) in enumerate(AXES):
+                run = 1
+                for sign in (1, -1):
+                    nq, nr = q + sign * dq, r + sign * dr
+                    while game.board.get((nq, nr)) == player:
+                        run += 1
+                        nq += sign * dq
+                        nr += sign * dr
+                arr[ch_base + axis_idx, ri, qi] = min(1.0, run / WIN_LENGTH)
 
     return arr, (oq, or_)
 

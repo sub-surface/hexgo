@@ -3,186 +3,341 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>HexGo Dashboard</title>
+<title>HexGo</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  :root {
-    --bg:       #0d1117;
-    --surface:  #161b22;
-    --border:   #21262d;
-    --text:     #e6edf3;
-    --dim:      #7d8590;
-    --accent:   #388bfd;
-    --green:    #3fb950;
-    --orange:   #d29922;
-    --red:      #f85149;
-    --p1:       #e8a020;
-    --p2:       #1a6fb5;
-    --font:     'Courier New', monospace;
-  }
-  html, body { height: 100%; overflow: hidden; }
-  body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 13px; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:       #080b0f;
+  --surface:  #0e1318;
+  --panel:    #111820;
+  --border:   #1c2430;
+  --border2:  #243040;
+  --text:     #c9d1d9;
+  --dim:      #586374;
+  --dim2:     #7d8fa3;
+  --accent:   #2f7cdb;
+  --green:    #2ea043;
+  --green2:   #3fb950;
+  --orange:   #c07c16;
+  --red:      #da3633;
+  --red2:     #f85149;
+  --purple:   #8957e5;
+  --teal:     #1b7c83;
+  --p1:       #c97b1a;
+  --p2:       #1a5fa0;
+  --font:     'Courier New', monospace;
+}
+html, body { height: 100%; overflow: hidden; }
+body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 12px; display: flex; flex-direction: column; }
 
-  /* Tab bar */
-  #tabbar { display: flex; border-bottom: 1px solid var(--border); background: var(--surface); padding: 0 16px; gap: 2px; flex-shrink: 0; }
-  .tab { padding: 10px 20px; cursor: pointer; border-bottom: 2px solid transparent; color: var(--dim); transition: color .15s, border-color .15s; user-select: none; }
-  .tab:hover { color: var(--text); }
-  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
-  #title { margin-left: auto; padding: 10px 0; color: var(--dim); letter-spacing: 3px; font-size: 11px; }
+/* ── Tab bar ──────────────────────────────────────────────────────────── */
+#tabbar {
+  display: flex; align-items: center;
+  border-bottom: 1px solid var(--border); background: var(--surface);
+  padding: 0 16px; gap: 0; flex-shrink: 0; height: 38px;
+}
+.tab {
+  padding: 0 18px; height: 38px; display: flex; align-items: center;
+  cursor: pointer; border-bottom: 2px solid transparent;
+  color: var(--dim); font-size: 11px; letter-spacing: 1px;
+  transition: color .1s, border-color .1s; user-select: none;
+}
+.tab:hover { color: var(--dim2); }
+.tab.active { color: var(--text); border-bottom-color: var(--accent); }
+#branding { margin-left: auto; color: var(--dim); letter-spacing: 4px; font-size: 10px; }
 
-  /* Tab content */
-  .tabpanel { display: none; flex: 1; overflow: hidden; min-height: 0; }
-  .tabpanel.active { display: flex; flex-direction: column; }
+/* ── Tab panels ───────────────────────────────────────────────────────── */
+.tabpanel { display: none; flex: 1; overflow: hidden; min-height: 0; }
+.tabpanel.active { display: flex; flex-direction: column; }
 
-  /* Shared layout primitives */
-  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 14px; }
-  .panel-title { color: var(--dim); font-size: 10px; letter-spacing: 2px; margin-bottom: 10px; }
-  .row { display: flex; gap: 12px; }
-  .col { display: flex; flex-direction: column; gap: 12px; }
-  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; }
-  .badge-green { background: #1a3a1e; color: var(--green); }
-  .badge-red   { background: #3a1a1a; color: var(--red); }
-  .badge-dim   { background: var(--border); color: var(--dim); }
-  btn, button { background: var(--border); color: var(--text); border: 1px solid #30363d; border-radius: 4px; padding: 6px 14px; cursor: pointer; font-family: var(--font); font-size: 12px; transition: background .15s; }
-  button:hover { background: #21262d; }
-  button.primary { background: #1f3a6e; border-color: var(--accent); color: var(--accent); }
-  button.primary:hover { background: #2a4a8e; }
-  button.danger { background: #3a1a1a; border-color: var(--red); color: var(--red); }
-  button.danger:hover { background: #4a2020; }
-  button:disabled { opacity: .4; cursor: not-allowed; }
-  input[type=number], input[type=text], select {
-    background: var(--bg); border: 1px solid var(--border); color: var(--text);
-    border-radius: 4px; padding: 5px 8px; font-family: var(--font); font-size: 12px; width: 100%;
-  }
-  input:focus, select:focus { outline: none; border-color: var(--accent); }
-  label { color: var(--dim); font-size: 11px; margin-bottom: 3px; display: block; }
-  .stat-row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--border); }
-  .stat-row:last-child { border-bottom: none; }
-  .stat-key { color: var(--dim); }
-  .stat-val { color: var(--text); font-weight: bold; }
+/* ── Layout primitives ────────────────────────────────────────────────── */
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
+.panel-hd {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--dim); font-size: 10px; letter-spacing: 1.5px;
+  display: flex; align-items: center; justify-content: space-between;
+  flex-shrink: 0;
+}
+.panel-body { padding: 10px 12px; }
+.row { display: flex; gap: 8px; }
+.col { display: flex; flex-direction: column; gap: 8px; }
+
+/* ── Stat rows ────────────────────────────────────────────────────────── */
+.sr { display: flex; justify-content: space-between; align-items: baseline; padding: 3px 0; border-bottom: 1px solid var(--border); }
+.sr:last-child { border-bottom: none; }
+.sr-k { color: var(--dim2); font-size: 11px; }
+.sr-v { color: var(--text); font-variant-numeric: tabular-nums; }
+.sr-v.good  { color: var(--green2); }
+.sr-v.warn  { color: var(--orange); }
+.sr-v.bad   { color: var(--red2); }
+
+/* ── Pill badges ──────────────────────────────────────────────────────── */
+.pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border-radius: 2px; font-size: 10px; letter-spacing: 1px;
+}
+.pill-idle    { background: #1a2030; color: var(--dim); border: 1px solid var(--border); }
+.pill-running { background: #0d2010; color: var(--green2); border: 1px solid #1a4020; }
+.pill-warn    { background: #2a1a00; color: var(--orange); border: 1px solid #3a2a00; }
+.dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+/* ── Buttons ──────────────────────────────────────────────────────────── */
+button {
+  background: var(--surface); color: var(--dim2);
+  border: 1px solid var(--border2); border-radius: 2px;
+  padding: 5px 12px; cursor: pointer; font-family: var(--font); font-size: 11px;
+  letter-spacing: .5px; transition: background .1s, color .1s;
+}
+button:hover { background: var(--border); color: var(--text); }
+button.primary { background: #112040; border-color: var(--accent); color: var(--accent); }
+button.primary:hover { background: #182c58; }
+button.danger  { background: #200c0c; border-color: var(--red);    color: var(--red2); }
+button.danger:hover  { background: #2c1010; }
+button.export  { background: #0d2020; border-color: var(--teal);   color: #26a6ae; }
+button.export:hover  { background: #123030; }
+button:disabled { opacity: .35; cursor: not-allowed; }
+.icon-btn { padding: 3px 7px; font-size: 12px; }
+
+/* ── Form inputs ──────────────────────────────────────────────────────── */
+input[type=number], input[type=text], select {
+  background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  border-radius: 2px; padding: 4px 7px; font-family: var(--font); font-size: 11px; width: 100%;
+}
+input:focus, select:focus { outline: none; border-color: var(--accent); }
+label { color: var(--dim2); font-size: 10px; letter-spacing: .5px; margin-bottom: 3px; display: block; }
+input[type=range] { accent-color: var(--accent); width: 100%; }
+
+/* ── Chart wrapper ────────────────────────────────────────────────────── */
+.chart-wrap { flex: 1; min-height: 0; position: relative; }
+.chart-wrap canvas { position: absolute; inset: 0; width: 100% !important; height: 100% !important; }
+
+/* ── Log ──────────────────────────────────────────────────────────────── */
+#log-tail {
+  color: var(--dim2); font-size: 10px; line-height: 1.5;
+  overflow-y: auto; flex: 1; min-height: 0;
+  white-space: pre-wrap; margin: 0; padding: 8px 12px;
+}
+#log-tail .err  { color: var(--red2); }
+#log-tail .warn { color: var(--orange); }
+#log-tail .ok   { color: var(--green2); }
+
+/* ── ELO table ────────────────────────────────────────────────────────── */
+#elo-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+#elo-table th { color: var(--dim); padding: 4px 8px; border-bottom: 1px solid var(--border); text-align: left; font-weight: normal; letter-spacing: 1px; font-size: 10px; }
+#elo-table td { padding: 4px 8px; border-bottom: 1px solid var(--border); }
+#elo-table tr:last-child td { border-bottom: none; }
+.elo-bar-bg { background: var(--border); border-radius: 1px; height: 4px; }
+.elo-bar-fill { background: var(--accent); border-radius: 1px; height: 4px; transition: width .3s; }
+
+/* ── Training tab layout ──────────────────────────────────────────────── */
+#tab-training { padding: 8px; gap: 8px; }
+.train-top    { display: flex; gap: 8px; flex-shrink: 0; }
+.train-charts { display: flex; gap: 8px; flex: 1; min-height: 0; }
+.train-bottom { flex: 0 0 130px; display: flex; gap: 8px; min-height: 0; }
+
+/* ── Config tab ───────────────────────────────────────────────────────── */
+#tab-config { padding: 8px; overflow-y: auto; gap: 8px; }
 </style>
 </head>
 <body>
 
 <div id="tabbar">
-  <div class="tab active" data-tab="training">Training</div>
-  <div class="tab" data-tab="replay">Replay</div>
-  <div class="tab" data-tab="config">Config</div>
-  <div id="title">HEXGO</div>
+  <div class="tab active" data-tab="training">TRAINING</div>
+  <div class="tab" data-tab="elo">ELO</div>
+  <div class="tab" data-tab="replay">REPLAY</div>
+  <div class="tab" data-tab="config">CONFIG</div>
+  <div id="branding">HEXGO</div>
 </div>
 
-<!-- Training tab -->
-<div class="tabpanel active" id="tab-training" style="padding:12px; gap:10px;">
-  <!-- row 1: controls + status -->
-  <div class="row" style="flex-shrink:0; min-height:0;">
-    <div class="panel col" style="flex:0 0 200px; min-width:0;">
-      <div class="panel-title">CONTROLS</div>
-      <div class="col" style="gap:8px;">
-        <div><label>Generations</label><input type="number" id="c-gens" value="50" min="1" max="9999"></div>
-        <div><label>Games / gen</label><input type="number" id="c-games" value="20" min="1" max="200"></div>
-        <div><label>Sims / move</label><input type="number" id="c-sims" value="100" min="5" max="2000"></div>
-      </div>
-      <div class="row" style="margin-top:10px; gap:8px;">
-        <button class="primary" id="btn-start" onclick="trainStart()">&#9654; START</button>
-        <button class="danger"  id="btn-stop"  onclick="trainStop()" disabled>&#9632; STOP</button>
+<!-- ═══════════════════════════════ TRAINING TAB ════════════════════════════ -->
+<div class="tabpanel active" id="tab-training">
+  <!-- row 1: controls | status | last gen | gen timing -->
+  <div class="train-top">
+
+    <!-- controls -->
+    <div class="panel col" style="flex:0 0 172px;">
+      <div class="panel-hd">CONTROLS</div>
+      <div class="panel-body col" style="gap:7px; flex:1;">
+        <div><label>GENERATIONS</label><input type="number" id="c-gens"  value="50"  min="1" max="9999"></div>
+        <div><label>GAMES / GEN</label><input type="number" id="c-games" value="20"  min="1" max="200"></div>
+        <div style="margin-top:2px; display:flex; gap:6px;">
+          <button class="primary" id="btn-start" onclick="trainStart()" style="flex:1;">▶ START</button>
+          <button class="danger"  id="btn-stop"  onclick="trainStop()"  style="flex:1;" disabled>■ STOP</button>
+        </div>
+        <button class="export" onclick="exportData()" style="margin-top:2px;">↓ EXPORT</button>
       </div>
     </div>
-    <div class="panel col" style="flex:1;">
-      <div class="panel-title">STATUS</div>
-      <div id="status-badge" class="badge badge-dim">IDLE</div>
-      <div id="status-stats" style="margin-top:8px;"></div>
+
+    <!-- status -->
+    <div class="panel" style="flex:1;">
+      <div class="panel-hd">STATUS</div>
+      <div class="panel-body">
+        <div style="margin-bottom:8px;"><span id="status-pill" class="pill pill-idle"><span class="dot"></span>IDLE</span></div>
+        <div id="status-stats"></div>
+      </div>
     </div>
-    <div class="panel col" style="flex:1;">
-      <div class="panel-title">LAST GEN</div>
-      <div id="last-gen-stats"></div>
+
+    <!-- last gen -->
+    <div class="panel" style="flex:1;">
+      <div class="panel-hd">LAST GENERATION</div>
+      <div class="panel-body" id="last-gen-stats" style="display:grid; grid-template-columns:1fr 1fr; gap:0 16px;"></div>
+    </div>
+
+    <!-- health indicators -->
+    <div class="panel" style="flex:1;">
+      <div class="panel-hd">HEALTH</div>
+      <div class="panel-body" id="health-stats"></div>
+    </div>
+
+  </div>
+
+  <!-- row 2: charts 2×4 -->
+  <div class="train-charts">
+    <div class="panel" style="flex:1; display:flex; flex-direction:column;">
+      <div class="panel-hd">TOTAL LOSS</div>
+      <div class="panel-body chart-wrap" style="padding:6px;"><canvas id="chart-loss"></canvas></div>
+    </div>
+    <div class="panel" style="flex:1; display:flex; flex-direction:column;">
+      <div class="panel-hd">VALUE LOSS</div>
+      <div class="panel-body chart-wrap" style="padding:6px;"><canvas id="chart-lossv"></canvas></div>
+    </div>
+    <div class="panel" style="flex:1; display:flex; flex-direction:column;">
+      <div class="panel-hd">POLICY LOSS</div>
+      <div class="panel-body chart-wrap" style="padding:6px;"><canvas id="chart-lossp"></canvas></div>
+    </div>
+    <div class="panel" style="flex:1; display:flex; flex-direction:column;">
+      <div class="panel-hd">ENTROPY</div>
+      <div class="panel-body chart-wrap" style="padding:6px;"><canvas id="chart-ent"></canvas></div>
     </div>
   </div>
-  <!-- row 2: charts -->
+  <div class="train-charts" style="flex: 0 0 0; min-height:130px;">
+    <div class="panel" style="flex:1; display:flex; flex-direction:column;">
+      <div class="panel-hd">EIS WINRATE</div>
+      <div class="panel-body chart-wrap" style="padding:6px;"><canvas id="chart-eis"></canvas></div>
+    </div>
+    <div class="panel" style="flex:1; display:flex; flex-direction:column;">
+      <div class="panel-hd">MOVE ACCURACY</div>
+      <div class="panel-body chart-wrap" style="padding:6px;"><canvas id="chart-acc"></canvas></div>
+    </div>
+    <div class="panel" style="flex:1; display:flex; flex-direction:column;">
+      <div class="panel-hd">VALUE SIGMA (uncertainty)</div>
+      <div class="panel-body chart-wrap" style="padding:6px;"><canvas id="chart-sigma"></canvas></div>
+    </div>
+    <div class="panel" style="flex:1; display:flex; flex-direction:column;">
+      <div class="panel-hd">LEARNING RATE</div>
+      <div class="panel-body chart-wrap" style="padding:6px;"><canvas id="chart-lr"></canvas></div>
+    </div>
+  </div>
+
+  <!-- row 3: log -->
+  <div class="panel train-bottom" style="flex-direction:column;">
+    <div class="panel-hd">
+      TRAIN LOG
+      <button class="icon-btn" onclick="refreshLog()" title="Refresh">↻</button>
+    </div>
+    <pre id="log-tail"></pre>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════ ELO TAB ═════════════════════════════════ -->
+<div class="tabpanel" id="tab-elo" style="padding:8px; gap:8px;">
+  <div class="row" style="flex:1; min-height:0; align-items:flex-start;">
+    <div class="panel" style="flex:1; min-height:0; display:flex; flex-direction:column;">
+      <div class="panel-hd">
+        ELO RATINGS
+        <button class="icon-btn" onclick="loadElo()" title="Refresh">↻</button>
+      </div>
+      <div class="panel-body" style="overflow-y:auto; flex:1;">
+        <table id="elo-table">
+          <thead><tr><th>#</th><th>AGENT</th><th>RATING</th><th style="width:120px;">BAR</th></tr></thead>
+          <tbody id="elo-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="panel" style="flex:1; min-height:0; display:flex; flex-direction:column;">
+      <div class="panel-hd">ELO HISTORY (top agents)</div>
+      <div class="panel-body chart-wrap" style="flex:1; min-height:200px; padding:6px;">
+        <canvas id="chart-elo-hist"></canvas>
+      </div>
+    </div>
+    <div class="panel" style="flex:0 0 240px; display:flex; flex-direction:column;">
+      <div class="panel-hd">RECENT GAMES</div>
+      <div class="panel-body" id="elo-recent" style="overflow-y:auto; flex:1; font-size:11px;"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════ REPLAY TAB ══════════════════════════════ -->
+<div class="tabpanel" id="tab-replay" style="padding:8px; gap:8px;">
   <div class="row" style="flex:1; min-height:0; overflow:hidden;">
-    <div class="panel" style="flex:1; min-height:0; display:flex; flex-direction:column;">
-      <div class="panel-title">LOSS</div>
-      <div style="flex:1; min-height:0; position:relative;"><canvas id="chart-loss" style="position:absolute;inset:0;width:100%!important;height:100%!important;"></canvas></div>
-    </div>
-    <div class="panel" style="flex:1; min-height:0; display:flex; flex-direction:column;">
-      <div class="panel-title">EIS WINRATE</div>
-      <div style="flex:1; min-height:0; position:relative;"><canvas id="chart-eis" style="position:absolute;inset:0;width:100%!important;height:100%!important;"></canvas></div>
-    </div>
-    <div class="panel" style="flex:1; min-height:0; display:flex; flex-direction:column;">
-      <div class="panel-title">ENTROPY</div>
-      <div style="flex:1; min-height:0; position:relative;"><canvas id="chart-ent" style="position:absolute;inset:0;width:100%!important;height:100%!important;"></canvas></div>
-    </div>
-    <div class="panel" style="flex:1; min-height:0; display:flex; flex-direction:column;">
-      <div class="panel-title">MOVE ACC</div>
-      <div style="flex:1; min-height:0; position:relative;"><canvas id="chart-acc" style="position:absolute;inset:0;width:100%!important;height:100%!important;"></canvas></div>
-    </div>
-  </div>
-  <!-- row 3: log tail -->
-  <div class="panel" style="flex:0 0 120px; overflow:hidden; display:flex; flex-direction:column;">
-    <div class="panel-title" style="flex-shrink:0;">TRAIN LOG <span style="float:right;cursor:pointer;color:var(--accent)" onclick="refreshLog()">&#8635;</span></div>
-    <pre id="log-tail" style="color:var(--dim); font-size:11px; overflow-y:auto; flex:1; min-height:0; white-space:pre-wrap; margin:0;"></pre>
-  </div>
-</div>
-
-<!-- Replay tab -->
-<div class="tabpanel" id="tab-replay" style="padding:12px; gap:10px;">
-  <div class="row" style="flex:1; min-height:0; overflow:hidden;">
-    <!-- file list -->
-    <div class="panel" style="flex:0 0 190px; min-width:0; display:flex; flex-direction:column; overflow:hidden;">
-      <div class="panel-title">REPLAYS <span style="float:right;cursor:pointer;color:var(--accent)" onclick="loadReplayList()">&#8635;</span></div>
-      <div id="replay-list" style="overflow-y:auto; flex:1; min-height:0; display:flex; flex-direction:column; gap:3px;"></div>
-    </div>
-    <!-- board -->
-    <div class="panel" style="flex:1; min-width:0; display:flex; flex-direction:column; overflow:hidden;">
-      <div class="panel-title" id="replay-title">SELECT A REPLAY</div>
-      <div style="flex:1; min-height:0; position:relative;">
-        <canvas id="replay-canvas" style="position:absolute;inset:0;width:100%!important;height:100%!important;"></canvas>
+    <div class="panel" style="flex:0 0 180px; display:flex; flex-direction:column; overflow:hidden;">
+      <div class="panel-hd">
+        REPLAYS
+        <button class="icon-btn" onclick="loadReplayList()" title="Refresh">↻</button>
       </div>
+      <div id="replay-list" style="overflow-y:auto; flex:1; padding:6px; display:flex; flex-direction:column; gap:2px;"></div>
     </div>
-    <!-- controls + info -->
-    <div class="panel col" style="flex:0 0 190px; min-width:0; overflow-y:auto;">
-      <div class="panel-title">PLAYBACK</div>
-      <div class="stat-row"><span class="stat-key">Move</span><span class="stat-val" id="r-move">&mdash;</span></div>
-      <div class="stat-row"><span class="stat-key">Player</span><span class="stat-val" id="r-player">&mdash;</span></div>
-      <div class="stat-row"><span class="stat-key">Winner</span><span class="stat-val" id="r-winner">&mdash;</span></div>
-      <div class="stat-row"><span class="stat-key">Total moves</span><span class="stat-val" id="r-total">&mdash;</span></div>
-      <div style="margin-top:12px;">
-        <label>Speed (ms/move)</label>
-        <input type="number" id="r-speed" value="300" min="50" max="2000">
-      </div>
-      <input type="range" id="r-scrub" min="0" value="0" style="width:100%; margin:10px 0; accent-color:var(--accent);">
-      <div class="row" style="flex-wrap:wrap; gap:6px; margin-top:4px;">
-        <button onclick="replayStep(-1)">&#9664;</button>
-        <button onclick="replayStep(1)">&#9654;</button>
-        <button onclick="replayTogglePlay()" id="r-playbtn">&#9654;&#9654;</button>
-        <button onclick="replayReset()">&#8634;</button>
+    <div class="panel" style="flex:1; display:flex; flex-direction:column; overflow:hidden;">
+      <div class="panel-hd" id="replay-title">SELECT A REPLAY</div>
+      <div class="chart-wrap" style="flex:1;"><canvas id="replay-canvas"></canvas></div>
+    </div>
+    <div class="panel col" style="flex:0 0 180px; overflow-y:auto;">
+      <div class="panel-hd">PLAYBACK</div>
+      <div class="panel-body col" style="gap:6px; flex:1;">
+        <div id="replay-info">
+          <div class="sr"><span class="sr-k">Move</span><span class="sr-v" id="r-move">—</span></div>
+          <div class="sr"><span class="sr-k">Player</span><span class="sr-v" id="r-player">—</span></div>
+          <div class="sr"><span class="sr-k">Winner</span><span class="sr-v" id="r-winner">—</span></div>
+          <div class="sr"><span class="sr-k">Total</span><span class="sr-v" id="r-total">—</span></div>
+          <div class="sr"><span class="sr-k">Gen</span><span class="sr-v" id="r-gen">—</span></div>
+        </div>
+        <div style="margin-top:4px;"><label>SPEED ms/move</label><input type="number" id="r-speed" value="300" min="50" max="2000"></div>
+        <input type="range" id="r-scrub" min="0" value="0">
+        <div class="row" style="flex-wrap:wrap; gap:4px; margin-top:2px; justify-content:center;">
+          <button onclick="replayStep(-1)">◀</button>
+          <button onclick="replayTogglePlay()" id="r-playbtn">▶▶</button>
+          <button onclick="replayStep(1)">▶</button>
+          <button onclick="replayReset()">↺</button>
+        </div>
       </div>
     </div>
   </div>
 </div>
 
-<!-- Config tab -->
-<div class="tabpanel" id="tab-config" style="padding:12px; overflow-y:auto;">
-  <div class="row" style="flex-wrap:wrap; gap:10px; align-items:flex-start;">
+<!-- ═══════════════════════════════ CONFIG TAB ══════════════════════════════ -->
+<div class="tabpanel" id="tab-config">
+  <div style="padding:8px; gap:8px; display:flex; flex-wrap:wrap; align-items:flex-start; overflow-y:auto; flex:1;">
     <div class="panel col" style="flex:1; min-width:260px;">
-      <div class="panel-title">HYPERPARAMETERS</div>
-      <div id="config-fields" class="col" style="gap:10px;"></div>
-      <div class="row" style="margin-top:14px; gap:8px; align-items:center;">
-        <button class="primary" onclick="configApply()">&#10003; APPLY TO config.py</button>
-        <button onclick="configReset()">&#8634; RESET</button>
-        <span id="config-status" style="color:var(--dim); font-size:11px;"></span>
+      <div class="panel-hd">
+        HYPERPARAMETERS
+        <span id="config-status" style="color:var(--dim); font-size:10px;"></span>
       </div>
-      <div style="margin-top:8px; color:var(--dim); font-size:11px;">Changes are staged until APPLY. Takes effect on next training run.</div>
+      <div class="panel-body">
+        <div id="config-fields" class="col" style="gap:8px; max-height:60vh; overflow-y:auto; padding-right:4px;"></div>
+        <div class="row" style="margin-top:12px; gap:6px;">
+          <button class="primary" onclick="configApply()">✓ APPLY</button>
+          <button onclick="configReset()">↺ RESET</button>
+        </div>
+        <div style="margin-top:6px; color:var(--dim); font-size:10px; line-height:1.6;">Changes staged until APPLY. Takes effect on next run.</div>
+      </div>
     </div>
-    <div class="panel col" style="flex:1; min-width:260px;">
-      <div class="panel-title">PARAMETER GUIDE</div>
-      <div id="config-guide" style="color:var(--dim); font-size:11px; line-height:1.7;"></div>
+    <div class="panel" style="flex:1; min-width:260px;">
+      <div class="panel-hd">PARAMETER GUIDE</div>
+      <div class="panel-body" id="config-guide" style="color:var(--dim2); font-size:11px; line-height:1.8;"></div>
     </div>
   </div>
 </div>
 
 <script>
-// ── Tab switching ─────────────────────────────────────────────────────────────
+'use strict';
+
+// ── Tab switching ──────────────────────────────────────────────────────────
 document.querySelectorAll('.tab').forEach(t => {
   t.addEventListener('click', () => {
     document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
@@ -191,67 +346,148 @@ document.querySelectorAll('.tab').forEach(t => {
     document.getElementById('tab-' + t.dataset.tab).classList.add('active');
     if (t.dataset.tab === 'replay') loadReplayList();
     if (t.dataset.tab === 'config') loadConfig();
+    if (t.dataset.tab === 'elo')    loadElo();
   });
 });
 
-// ── Shared fetch helper ───────────────────────────────────────────────────────
-async function api(path, opts={}) {
+// ── API helper ─────────────────────────────────────────────────────────────
+async function api(path, opts = {}) {
   const r = await fetch(path, opts);
   if (!r.ok) throw new Error(await r.text());
   return r.json();
 }
 
-// ── Charts setup ──────────────────────────────────────────────────────────────
-const CHART_OPTS = (label, color) => ({
-  type: 'line',
-  data: { labels: [], datasets: [{ label, data: [], borderColor: color,
-    backgroundColor: color + '22', borderWidth: 1.5, pointRadius: 2, tension: 0.3 }] },
-  options: {
-    animation: false, responsive: true, maintainAspectRatio: false,
-    plugins: { legend: { display: false } },
-    scales: {
-      x: { ticks: { color: '#7d8590', font: { family: 'Courier New', size: 10 } }, grid: { color: '#21262d' } },
-      y: { ticks: { color: '#7d8590', font: { family: 'Courier New', size: 10 } }, grid: { color: '#21262d' } },
+// ── Chart factory ──────────────────────────────────────────────────────────
+const GRID  = '#1c2430';
+const TICK  = { color: '#586374', font: { family: 'Courier New', size: 9 } };
+
+function makeChart(id, datasets, yMin, yMax) {
+  return new Chart(document.getElementById(id), {
+    type: 'line',
+    data: { labels: [], datasets },
+    options: {
+      animation: false, responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: datasets.length > 1, labels: { color: '#7d8fa3', font: { family: 'Courier New', size: 9 }, boxWidth: 10, padding: 8 } } },
+      scales: {
+        x: { ticks: TICK, grid: { color: GRID } },
+        y: {
+          ticks: TICK, grid: { color: GRID },
+          ...(yMin !== undefined ? { min: yMin } : {}),
+          ...(yMax !== undefined ? { max: yMax } : {}),
+        }
+      }
     }
-  }
-});
-
-const chartLoss = new Chart(document.getElementById('chart-loss'), CHART_OPTS('loss', '#388bfd'));
-const chartEis  = new Chart(document.getElementById('chart-eis'),  CHART_OPTS('eis_wr', '#3fb950'));
-const chartEnt  = new Chart(document.getElementById('chart-ent'),  CHART_OPTS('entropy', '#d29922'));
-const chartAcc  = new Chart(document.getElementById('chart-acc'),  CHART_OPTS('move_acc', '#bc8cff'));
-
-function pushMetric(d) {
-  const gen = String(d.gen);
-  [chartLoss, chartEis, chartEnt, chartAcc].forEach(c => {
-    if (!c.data.labels.includes(gen)) c.data.labels.push(gen);
   });
-  const idx = chartLoss.data.labels.indexOf(gen);
-  chartLoss.data.datasets[0].data[idx] = d.avg_loss;
-  chartEis.data.datasets[0].data[idx]  = d.eis_winrate;
-  chartEnt.data.datasets[0].data[idx]  = d.avg_ent;
-  chartAcc.data.datasets[0].data[idx]  = d.move_acc;
-  [chartLoss, chartEis, chartEnt, chartAcc].forEach(c => c.update('none'));
-
-  // last gen stats
-  document.getElementById('last-gen-stats').innerHTML = `
-    <div class="stat-row"><span class="stat-key">Gen</span><span class="stat-val">${d.gen}</span></div>
-    <div class="stat-row"><span class="stat-key">Loss</span><span class="stat-val">${d.avg_loss ?? '&mdash;'}</span></div>
-    <div class="stat-row"><span class="stat-key">Loss V</span><span class="stat-val">${d.avg_loss_v ?? '&mdash;'}</span></div>
-    <div class="stat-row"><span class="stat-key">Loss P</span><span class="stat-val">${d.avg_loss_p ?? '&mdash;'}</span></div>
-    <div class="stat-row"><span class="stat-key">Loss Aux</span><span class="stat-val">${d.avg_aux ?? '&mdash;'}</span></div>
-    <div class="stat-row"><span class="stat-key">Val Sigma</span><span class="stat-val">${d.avg_sigma ?? '&mdash;'}</span></div>
-    <div class="stat-row"><span class="stat-key">Move Acc</span><span class="stat-val">${d.move_acc ?? '&mdash;'}</span></div>
-    <div class="stat-row"><span class="stat-key">Eis WR</span><span class="stat-val">${d.eis_winrate ?? '&mdash;'}</span></div>
-    <div class="stat-row"><span class="stat-key">Buffer</span><span class="stat-val">${d.buffer_size ?? '&mdash;'}</span></div>
-    <div class="stat-row"><span class="stat-key">Gen time</span><span class="stat-val">${d.gen_time_s ?? '&mdash;'}s</span></div>
-  `;
 }
 
-// Load historical metrics on startup
-api('/api/metrics').then(arr => arr.forEach(pushMetric)).catch(() => {});
+function ds(label, color, fill) {
+  return { label, data: [], borderColor: color,
+    backgroundColor: fill ? color + '18' : 'transparent',
+    borderWidth: 1.5, pointRadius: 1.5, pointHoverRadius: 3,
+    tension: 0.2, fill: !!fill };
+}
 
-// ── SSE stream ────────────────────────────────────────────────────────────────
+const charts = {
+  loss:   makeChart('chart-loss',   [ds('total','#2f7cdb', true)]),
+  lossv:  makeChart('chart-lossv',  [ds('value','#3fb950', true)]),
+  lossp:  makeChart('chart-lossp',  [ds('policy','#d29922', true)]),
+  ent:    makeChart('chart-ent',    [ds('entropy','#8957e5', true)], 0),
+  eis:    makeChart('chart-eis',    [ds('winrate','#3fb950', true)], 0, 1),
+  acc:    makeChart('chart-acc',    [ds('move_acc','#26a6ae', true)], 0, 1),
+  sigma:  makeChart('chart-sigma',  [ds('σ','#e07060', true)], 0),
+  lr:     makeChart('chart-lr',     [ds('lr','#586374', false)]),
+  eloHist: makeChart('chart-elo-hist', []),
+};
+
+// ── Metrics store ──────────────────────────────────────────────────────────
+let _allMetrics = [];
+
+function pushMetric(d) {
+  // deduplicate by gen — replace if exists
+  const idx = _allMetrics.findIndex(m => m.gen === d.gen);
+  if (idx >= 0) _allMetrics[idx] = d; else _allMetrics.push(d);
+  _allMetrics.sort((a, b) => a.gen - b.gen);
+  rebuildCharts();
+  renderLastGen(_allMetrics[_allMetrics.length - 1]);
+  renderHealth(_allMetrics[_allMetrics.length - 1]);
+}
+
+function rebuildCharts() {
+  const labels = _allMetrics.map(d => String(d.gen));
+  function setChart(c, key) {
+    c.data.labels = labels;
+    c.data.datasets[0].data = _allMetrics.map(d => d[key] ?? null);
+    c.update('none');
+  }
+  setChart(charts.loss,  'avg_loss');
+  setChart(charts.lossv, 'avg_loss_v');
+  setChart(charts.lossp, 'avg_loss_p');
+  setChart(charts.ent,   'avg_ent');
+  setChart(charts.eis,   'eis_winrate');
+  setChart(charts.acc,   'move_acc');
+  setChart(charts.sigma, 'avg_sigma');
+  setChart(charts.lr,    'lr');
+}
+
+function fmt(v, digits = 4) {
+  if (v == null) return '—';
+  if (typeof v === 'number') return v.toFixed ? v.toFixed(digits) : v;
+  return String(v);
+}
+
+function renderLastGen(d) {
+  if (!d) return;
+  const el = document.getElementById('last-gen-stats');
+  const rows = [
+    ['Gen',       d.gen,              0],
+    ['Loss',      d.avg_loss,         4],
+    ['Loss V',    d.avg_loss_v,       4],
+    ['Loss P',    d.avg_loss_p,       4],
+    ['Loss Aux',  d.avg_aux,          4],
+    ['Entropy',   d.avg_ent,          4],
+    ['Move Acc',  d.move_acc,         3],
+    ['Eis WR',    d.eis_winrate,      3],
+    ['Val σ',     d.avg_sigma,        3],
+    ['LR',        d.lr,               5],
+    ['Buffer',    d.buffer_size,      0],
+    ['Gen time',  d.gen_time_s ? d.gen_time_s + 's' : null, 0],
+  ];
+  el.innerHTML = rows.map(([k, v, dig]) =>
+    `<div class="sr"><span class="sr-k">${k}</span><span class="sr-v">${v == null ? '—' : (typeof v === 'number' && dig ? v.toFixed(dig) : v)}</span></div>`
+  ).join('');
+}
+
+function renderHealth(d) {
+  if (!d) return;
+  const checks = [];
+  // Loss spike
+  const lossOk = d.avg_loss != null && d.avg_loss < 10;
+  checks.push({ label: 'Loss normal', ok: lossOk, val: fmt(d.avg_loss) });
+  // Value loss learning
+  const vlOk = d.avg_loss_v != null && d.avg_loss_v < 0.25;
+  checks.push({ label: 'Value converging', ok: vlOk, val: fmt(d.avg_loss_v) });
+  // Entropy not collapsed
+  const entOk = d.avg_ent != null && d.avg_ent > 1.5 && d.avg_ent < 4.5;
+  checks.push({ label: 'Entropy healthy', ok: entOk, val: fmt(d.avg_ent, 3) });
+  // Move acc
+  const accOk = d.move_acc != null && d.move_acc > 0;
+  checks.push({ label: 'Move acc > 0', ok: accOk, val: fmt(d.move_acc, 3) });
+  // Sigma not diverging
+  const sigOk = d.avg_sigma != null && d.avg_sigma < 1.0;
+  checks.push({ label: 'Sigma stable', ok: sigOk, val: fmt(d.avg_sigma, 3) });
+
+  document.getElementById('health-stats').innerHTML = checks.map(c =>
+    `<div class="sr">
+      <span class="sr-k">${c.label}</span>
+      <span class="sr-v ${c.ok ? 'good' : 'bad'}">${c.ok ? '✓' : '✗'} ${c.val}</span>
+    </div>`
+  ).join('');
+}
+
+// Load history on startup
+api('/api/metrics').then(arr => { arr.forEach(pushMetric); }).catch(() => {});
+
+// ── SSE ────────────────────────────────────────────────────────────────────
 let _es = null;
 function connectSSE() {
   if (_es) { _es.close(); _es = null; }
@@ -262,246 +498,338 @@ function connectSSE() {
       const msg = JSON.parse(e.data);
       if (msg.type === 'metrics') pushMetric(msg.data);
       if (msg.type === 'status')  updateStatus(msg.data);
-    } catch(_) {}
+    } catch (_) {}
   };
   es.onerror = () => { es.close(); setTimeout(connectSSE, 3000); };
 }
 connectSSE();
 
-// ── Status panel ──────────────────────────────────────────────────────────────
+// ── Status ─────────────────────────────────────────────────────────────────
 function updateStatus(s) {
-  const badge = document.getElementById('status-badge');
+  const pill  = document.getElementById('status-pill');
   const stats = document.getElementById('status-stats');
   const start = document.getElementById('btn-start');
   const stop  = document.getElementById('btn-stop');
 
   if (s.state === 'running') {
-    badge.className = 'badge badge-green'; badge.textContent = '● RUNNING';
+    pill.className = 'pill pill-running';
+    pill.innerHTML = '<span class="dot"></span>RUNNING';
     start.disabled = true; stop.disabled = false;
-    stats.innerHTML = `<div class="stat-row"><span class="stat-key">PID</span><span class="stat-val">${s.pid}</span></div>
-      <div class="stat-row"><span class="stat-key">Elapsed</span><span class="stat-val">${s.elapsed_s}s</span></div>`;
+    stats.innerHTML =
+      `<div class="sr"><span class="sr-k">PID</span><span class="sr-v">${s.pid}</span></div>` +
+      `<div class="sr"><span class="sr-k">Elapsed</span><span class="sr-v">${s.elapsed_s}s</span></div>`;
   } else {
-    badge.className = 'badge badge-dim'; badge.textContent = 'IDLE';
+    pill.className = 'pill pill-idle';
+    pill.innerHTML = '<span class="dot"></span>IDLE';
     start.disabled = false; stop.disabled = true;
     stats.innerHTML = s.returncode !== undefined
-      ? `<div class="stat-row"><span class="stat-key">Exit code</span><span class="stat-val">${s.returncode}</span></div>` : '';
+      ? `<div class="sr"><span class="sr-k">Exit</span><span class="sr-v ${s.returncode === 0 ? 'good' : 'bad'}">${s.returncode}</span></div>` : '';
   }
 }
-// Poll status every 5s (SSE handles fast updates; this is a fallback)
 setInterval(() => api('/api/status').then(updateStatus).catch(() => {}), 5000);
 api('/api/status').then(updateStatus).catch(() => {});
 
-// ── Training controls ─────────────────────────────────────────────────────────
+// ── Training controls ──────────────────────────────────────────────────────
 async function trainStart() {
   const gens  = document.getElementById('c-gens').value;
   const games = document.getElementById('c-games').value;
-  const sims  = document.getElementById('c-sims').value;
-  try {
-    await api(`/api/train/start?gens=${gens}&games=${games}&sims=${sims}`, {method:'POST'});
-  } catch(e) { alert('Start failed: ' + e.message); }
+  try { await api(`/api/train/start?gens=${gens}&games=${games}`, { method: 'POST' }); }
+  catch (e) { alert('Start failed: ' + e.message); }
 }
 async function trainStop() {
-  try { await api('/api/train/stop', {method:'POST'}); }
-  catch(e) { alert('Stop failed: ' + e.message); }
+  try { await api('/api/train/stop', { method: 'POST' }); }
+  catch (e) { alert('Stop failed: ' + e.message); }
 }
 
-// ── Log tail ──────────────────────────────────────────────────────────────────
+// ── Log ────────────────────────────────────────────────────────────────────
 async function refreshLog() {
   try {
-    const data = await api('/api/log?n=60');
-    document.getElementById('log-tail').textContent = data.lines.join('\n');
-  } catch(_) {}
+    const data = await api('/api/log?n=80');
+    const el = document.getElementById('log-tail');
+    el.innerHTML = data.lines.map(l => {
+      if (/ERROR|error/.test(l)) return `<span class="err">${escHtml(l)}</span>`;
+      if (/WARNING|warn/.test(l)) return `<span class="warn">${escHtml(l)}</span>`;
+      if (/Generation \d+ done|ELO|win_rate/.test(l)) return `<span class="ok">${escHtml(l)}</span>`;
+      return escHtml(l);
+    }).join('\n');
+    el.scrollTop = el.scrollHeight;
+  } catch (_) {}
 }
+function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 setInterval(refreshLog, 3000);
 refreshLog();
 
-// ── Config tab ────────────────────────────────────────────────────────────────
+// ── Export ─────────────────────────────────────────────────────────────────
+async function exportData() {
+  try {
+    const [metrics, elo, status] = await Promise.all([
+      api('/api/metrics'),
+      api('/api/elo'),
+      api('/api/status'),
+    ]);
+    const payload = {
+      exported_at: new Date().toISOString(),
+      status,
+      metrics,
+      elo_ratings: elo.ratings,
+      elo_history_tail: (elo.history || []).slice(-50),
+      summary: {
+        total_gens: metrics.length,
+        latest: metrics[metrics.length - 1] || null,
+        best_move_acc: Math.max(...metrics.map(m => m.move_acc || 0)),
+        best_eis_winrate: Math.max(...metrics.map(m => m.eis_winrate || 0)),
+        min_loss_v: Math.min(...metrics.filter(m => m.avg_loss_v != null).map(m => m.avg_loss_v)),
+        eis_elo: elo.ratings?.eisenstein_def ?? null,
+      }
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url;
+    a.download = `hexgo_export_${new Date().toISOString().slice(0,19).replace(/[:.]/g,'-')}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (e) { alert('Export failed: ' + e.message); }
+}
+
+// ── ELO tab ────────────────────────────────────────────────────────────────
+let _eloData = null;
+
+async function loadElo() {
+  try {
+    _eloData = await api('/api/elo');
+    renderEloTable(_eloData);
+    renderEloHistory(_eloData);
+    renderEloRecent(_eloData);
+  } catch (_) {}
+}
+
+function renderEloTable(data) {
+  const sorted = Object.entries(data.ratings || {}).sort((a, b) => b[1] - a[1]);
+  const maxR = sorted.length ? sorted[0][1] : 1600;
+  const tbody = document.getElementById('elo-tbody');
+  tbody.innerHTML = sorted.map(([name, r], i) => {
+    const pct = Math.round(100 * r / maxR);
+    const cls = i === 0 ? 'style="color:var(--green2)"' : '';
+    return `<tr>
+      <td style="color:var(--dim)">${i + 1}</td>
+      <td ${cls}>${name}</td>
+      <td ${cls}>${Math.round(r)}</td>
+      <td><div class="elo-bar-bg"><div class="elo-bar-fill" style="width:${pct}%"></div></div></td>
+    </tr>`;
+  }).join('');
+}
+
+function renderEloHistory(data) {
+  const hist = data.history || [];
+  // collect per-agent rating over time from history snapshots
+  const agents = {};
+  hist.forEach(h => {
+    if (!h.ratings) return;
+    Object.entries(h.ratings).forEach(([name, r]) => {
+      if (!agents[name]) agents[name] = [];
+      agents[name].push(r);
+    });
+  });
+  const COLORS = ['#2f7cdb','#3fb950','#d29922','#8957e5','#26a6ae','#f85149'];
+  const agentList = Object.keys(agents).slice(0, 6);
+  const maxLen = Math.max(...agentList.map(a => agents[a].length));
+  charts.eloHist.data.labels = Array.from({ length: maxLen }, (_, i) => i + 1);
+  charts.eloHist.data.datasets = agentList.map((name, i) => ({
+    label: name, data: agents[name],
+    borderColor: COLORS[i % COLORS.length],
+    backgroundColor: 'transparent',
+    borderWidth: 1.5, pointRadius: 0, tension: 0.2,
+  }));
+  charts.eloHist.options.plugins.legend.display = true;
+  charts.eloHist.update('none');
+}
+
+function renderEloRecent(data) {
+  const hist = (data.history || []).slice(-20).reverse();
+  document.getElementById('elo-recent').innerHTML = hist.map(h => {
+    const winner = h.winner || 'draw';
+    const wColor = h.winner ? 'var(--green2)' : 'var(--dim)';
+    return `<div style="padding:4px 0; border-bottom:1px solid var(--border); line-height:1.5;">
+      <span style="color:var(--text)">${h.a}</span>
+      <span style="color:var(--dim)"> vs </span>
+      <span style="color:var(--text)">${h.b}</span><br>
+      <span style="color:${wColor}">⇒ ${winner}</span>
+      <span style="color:var(--dim); float:right">${h.moves}mv</span>
+    </div>`;
+  }).join('');
+}
+
+setInterval(() => { if (document.getElementById('tab-elo').classList.contains('active')) loadElo(); }, 10000);
+
+// ── Config tab ─────────────────────────────────────────────────────────────
 const CONFIG_GUIDE = {
-  LR:                 'Adam learning rate',
-  WEIGHT_DECAY:       'L2 regularisation weight',
-  BATCH_SIZE:         'Training batch size',
-  SIMS:               'Full MCTS sim budget (25% of games)',
-  SIMS_MIN:           'Reduced sim budget floor (75% of games) — keep << SIMS',
-  CAP_FULL_FRAC:      'Fraction of games using full SIMS',
-  CPUCT:              'PUCT exploration constant',
-  DIRICHLET_ALPHA:    'Root Dirichlet noise concentration',
-  DIRICHLET_EPS:      'Root Dirichlet noise weight',
-  ZOI_MARGIN:         'Zone-of-influence pruning radius (hex distance)',
-  TD_GAMMA:           'TD-lambda discount for value targets',
-  TEMP_HORIZON:       'Cosine temp annealing full-life (moves)',
-  WEIGHT_SYNC_BATCHES:'Batches between weight sync to inference server',
+  LR:                  'Adam learning rate',
+  WEIGHT_DECAY:        'L2 regularisation weight',
+  BATCH_SIZE:          'Training batch size',
+  SIMS:                'Full MCTS sim budget',
+  SIMS_MIN:            'Reduced sim budget floor — keep << SIMS',
+  CAP_FULL_FRAC:       'Fraction of games using full SIMS (0 = all cheap)',
+  CPUCT:               'PUCT exploration constant',
+  DIRICHLET_ALPHA:     'Root noise concentration (10/|ZoI| ≈ 0.09)',
+  DIRICHLET_EPS:       'Root noise weight',
+  ZOI_MARGIN:          'Zone-of-interest radius (min 5 for 6-in-a-row)',
+  ZOI_LOOKBACK:        'Recent moves defining ZOI focus',
+  GUMBEL_SELECTION:    'Gumbel argmax root selection',
+  TD_GAMMA:            'TD-lambda discount for value targets',
+  TEMP_HORIZON:        'Cosine temp annealing full-life (moves)',
+  WEIGHT_SYNC_BATCHES: 'Batches between inference server weight sync',
+  RECENCY_WEIGHT:      'Fraction of batch from recent half of buffer',
+  TRUNK_BLOCKS:        'Residual blocks in trunk',
+  TRUNK_CHANNELS:      'Hidden channels throughout trunk',
+  VALUE_LOSS_WEIGHT:   'Multiplier on MSE value loss',
+  ENTROPY_REG:         'Policy entropy regularisation weight',
+  AUX_LOSS_OWN:        'Ownership head loss weight',
+  AUX_LOSS_THREAT:     'Threat head loss weight',
+  UNC_LOSS_WEIGHT:     'Value uncertainty (Gaussian NLL) loss weight',
 };
 let _cfgStaged = null;
 
 async function loadConfig() {
-  const cfg = await api('/api/config');
-  _cfgStaged = Object.assign({}, cfg);
-  const fields = document.getElementById('config-fields');
-  fields.innerHTML = '';
-  const guide = document.getElementById('config-guide');
-  guide.innerHTML = Object.entries(CONFIG_GUIDE).map(([k,v]) =>
-    `<div><span style="color:var(--text)">${k}</span>: ${v}</div>`).join('');
-  for (const [k, v] of Object.entries(cfg)) {
-    const wrap = document.createElement('div');
-    wrap.innerHTML = `<label>${k}</label>
-      <input type="text" id="cfg-${k}" value="${v}" data-key="${k}" oninput="cfgStage(this)">`;
-    fields.appendChild(wrap);
-  }
+  try {
+    const cfg = await api('/api/config');
+    _cfgStaged = Object.assign({}, cfg);
+    const fields = document.getElementById('config-fields');
+    fields.innerHTML = '';
+    document.getElementById('config-guide').innerHTML =
+      Object.entries(CONFIG_GUIDE).map(([k, v]) =>
+        `<div><span style="color:var(--text)">${k}</span>  <span style="color:var(--dim)">—</span>  ${v}</div>`
+      ).join('');
+    for (const [k, v] of Object.entries(cfg)) {
+      const wrap = document.createElement('div');
+      wrap.innerHTML = `<label>${k}</label>
+        <input type="text" id="cfg-${k}" value="${v}" data-key="${k}" oninput="cfgStage(this)">`;
+      fields.appendChild(wrap);
+    }
+  } catch (_) {}
 }
 
 function cfgStage(el) {
   const key = el.dataset.key;
   const raw = el.value.trim();
-  if (raw === '') return;  // ignore empty — don't zero out a value
+  if (raw === '') return;
   const num = Number(raw);
-  _cfgStaged[key] = (raw !== '' && !isNaN(num)) ? num : raw;
-  document.getElementById('config-status').textContent = '● unsaved changes';
+  _cfgStaged[key] = (!isNaN(num) && raw !== '') ? num : raw;
+  document.getElementById('config-status').textContent = '● unsaved';
 }
-
-function configReset() {
-  loadConfig();
-  document.getElementById('config-status').textContent = '';
-}
-
+function configReset() { loadConfig(); document.getElementById('config-status').textContent = ''; }
 async function configApply() {
   try {
-    await api('/api/config', { method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(_cfgStaged) });
+    await api('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(_cfgStaged) });
     document.getElementById('config-status').textContent = '✓ saved';
     setTimeout(() => document.getElementById('config-status').textContent = '', 2000);
-  } catch(e) {
+  } catch (e) {
     document.getElementById('config-status').textContent = '✗ ' + e.message;
   }
 }
 
-// ── Replay tab ────────────────────────────────────────────────────────────────
-let _replayData   = null;   // full replay JSON
-let _replayIdx    = 0;      // current move index (0 = empty board)
-let _replayBoard  = {};     // (q,r) -> player
-let _replayTimer  = null;   // auto-play interval ID
-let _replayPlaying = false;
+// ── Replay tab ─────────────────────────────────────────────────────────────
+let _replayData = null, _replayIdx = 0, _replayBoard = {}, _replayTimer = null, _replayPlaying = false;
 
 async function loadReplayList() {
-  const list = await api('/api/replays');
-  const el = document.getElementById('replay-list');
-  el.innerHTML = '';
-  list.forEach(name => {
-    const btn = document.createElement('div');
-    btn.textContent = name.replace('game_','').replace('.json','');
-    btn.style.cssText = 'padding:5px 8px;cursor:pointer;border-radius:4px;color:var(--dim);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
-    btn.title = name;
-    btn.onclick = () => loadReplay(name);
-    el.appendChild(btn);
-  });
+  try {
+    const list = await api('/api/replays');
+    const el = document.getElementById('replay-list');
+    el.innerHTML = '';
+    list.forEach(name => {
+      const btn = document.createElement('div');
+      const label = name.replace('game_','').replace('.json','');
+      btn.textContent = label;
+      btn.title = name;
+      btn.style.cssText = 'padding:4px 7px;cursor:pointer;border-radius:2px;color:var(--dim2);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:background .1s;';
+      btn.onmouseenter = () => btn.style.background = 'var(--border)';
+      btn.onmouseleave = () => btn.style.background = '';
+      btn.onclick = () => {
+        el.querySelectorAll('div').forEach(d => d.style.color = 'var(--dim2)');
+        btn.style.color = 'var(--text)';
+        loadReplay(name);
+      };
+      el.appendChild(btn);
+    });
+  } catch (_) {}
 }
 
 async function loadReplay(filename) {
-  _replayData = await api('/api/replay/' + filename);
-  _replayIdx = 0;
-  _replayBoard = {};
-  replayStopPlay();
-  const total = _replayData.moves.length;
-  document.getElementById('r-total').textContent = total;
-  document.getElementById('r-winner').textContent =
-    _replayData.winner === 1 ? 'X' : _replayData.winner === 2 ? 'O' : 'draw';
-  document.getElementById('replay-title').textContent =
-    filename.replace('game_','').replace('.json','');
-  const scrub = document.getElementById('r-scrub');
-  scrub.max = total;
-  scrub.value = 0;
-  scrub.oninput = () => replayJump(parseInt(scrub.value));
-  replayDraw();
+  try {
+    _replayData = await api('/api/replay/' + filename);
+    _replayIdx = 0; _replayBoard = {};
+    replayStopPlay();
+    const total = _replayData.moves.length;
+    document.getElementById('r-total').textContent = total;
+    document.getElementById('r-gen').textContent = _replayData.gen ?? '—';
+    document.getElementById('r-winner').textContent =
+      _replayData.winner === 1 ? 'X (P1)' : _replayData.winner === 2 ? 'O (P2)' : 'draw';
+    document.getElementById('replay-title').textContent =
+      filename.replace('game_','').replace('.json','');
+    const scrub = document.getElementById('r-scrub');
+    scrub.max = total; scrub.value = 0;
+    scrub.oninput = () => replayJump(parseInt(scrub.value));
+    replayDraw();
+  } catch (_) {}
 }
 
 function replayJump(idx) {
   if (!_replayData) return;
   _replayIdx = Math.max(0, Math.min(idx, _replayData.moves.length));
-  // Rebuild board from scratch up to idx
   _replayBoard = {};
   let cur = 1, placed = 0;
   for (let i = 0; i < _replayIdx; i++) {
     const [q, r] = _replayData.moves[i];
     _replayBoard[`${q},${r}`] = cur;
     placed++;
-    const limit = (i < 1) ? 1 : 2;
-    if (placed >= limit) { cur = 3 - cur; placed = 0; }
+    if (placed >= (i < 1 ? 1 : 2)) { cur = 3 - cur; placed = 0; }
   }
   document.getElementById('r-scrub').value = _replayIdx;
   replayDraw();
 }
-
-function replayStep(delta) {
-  if (!_replayData) return;
-  replayJump(_replayIdx + delta);
-}
-
+function replayStep(d) { if (_replayData) replayJump(_replayIdx + d); }
 function replayReset() { replayJump(0); }
-
 function replayTogglePlay() {
   if (_replayPlaying) { replayStopPlay(); return; }
   _replayPlaying = true;
   document.getElementById('r-playbtn').textContent = '⏸';
-  function tick() {
+  (function tick() {
     if (!_replayPlaying || !_replayData) return;
     if (_replayIdx >= _replayData.moves.length) { replayStopPlay(); return; }
     replayStep(1);
-    const ms = parseInt(document.getElementById('r-speed').value) || 300;
-    _replayTimer = setTimeout(tick, ms);
-  }
-  tick();
+    _replayTimer = setTimeout(tick, parseInt(document.getElementById('r-speed').value) || 300);
+  })();
 }
-
 function replayStopPlay() {
   _replayPlaying = false;
   document.getElementById('r-playbtn').textContent = '▶▶';
   if (_replayTimer) { clearTimeout(_replayTimer); _replayTimer = null; }
 }
 
-// ── Hex canvas renderer ───────────────────────────────────────────────────────
-const HEX_COLORS = {
-  bg:    '#0d1117', gridLine: '#1e2a38',
-  p1:    '#e8a020', p1b: '#ffcc66',
-  p2:    '#1a6fb5', p2b: '#66aaee',
-  empty: '#141c26', emptyB: '#1e2a38',
-  last:  '#ffffff',
-};
-
+// ── Hex renderer ───────────────────────────────────────────────────────────
 function replayDraw() {
   const canvas = document.getElementById('replay-canvas');
   const ctx = canvas.getContext('2d');
-  // Size canvas to its absolutely-positioned parent wrapper
-  const wrapper = canvas.parentElement;
-  canvas.width  = wrapper.clientWidth  || 600;
-  canvas.height = wrapper.clientHeight || 400;
-
-  const W = canvas.width, H = canvas.height;
-  ctx.fillStyle = HEX_COLORS.bg;
-  ctx.fillRect(0, 0, W, H);
-
+  const W = canvas.width  = canvas.parentElement.clientWidth  || 600;
+  const H = canvas.height = canvas.parentElement.clientHeight || 400;
+  ctx.fillStyle = '#080b0f'; ctx.fillRect(0, 0, W, H);
   if (!_replayData) return;
 
-  // Determine board extent from all moves
   const allMoves = _replayData.moves;
   if (!allMoves.length) return;
-  const qs = allMoves.map(m => m[0]);
-  const rs = allMoves.map(m => m[1]);
+  const qs = allMoves.map(m => m[0]), rs = allMoves.map(m => m[1]);
   const qMin = Math.min(...qs) - 1, qMax = Math.max(...qs) + 1;
   const rMin = Math.min(...rs) - 1, rMax = Math.max(...rs) + 1;
-
-  // Auto-fit hex size
   const cols = qMax - qMin + 1, rows = rMax - rMin + 1;
-  const size = Math.max(8, Math.min(30, Math.floor(Math.min(W / (cols * 1.6), H / (rows * 1.2)))));
-  const ox = W / 2 - (size * 1.5 * ((qMin + qMax) / 2));
-  const oy = H / 2 - (size * Math.sqrt(3) * ((rMin + rMax) / 2 + (qMin + qMax) / 4));
+  const sz = Math.max(8, Math.min(28, Math.floor(Math.min(W / (cols * 1.6), H / (rows * 1.2)))));
+  const ox = W / 2 - sz * 1.5 * ((qMin + qMax) / 2);
+  const oy = H / 2 - sz * Math.sqrt(3) * ((rMin + rMax) / 2 + (qMin + qMax) / 4);
 
-  function hexToPixel(q, r) {
-    return [ox + size * 1.5 * q, oy + size * Math.sqrt(3) * (r + q / 2)];
-  }
+  function toXY(q, r) { return [ox + sz * 1.5 * q, oy + sz * Math.sqrt(3) * (r + q / 2)]; }
   function hexPath(cx, cy, s) {
     ctx.beginPath();
     for (let i = 0; i < 6; i++) {
-      const a = Math.PI / 180 * 60 * i;
+      const a = Math.PI / 3 * i;
       const x = cx + (s - 1) * Math.cos(a), y = cy + (s - 1) * Math.sin(a);
       i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
     }
@@ -509,50 +837,41 @@ function replayDraw() {
   }
 
   const lastMove = _replayIdx > 0 ? _replayData.moves[_replayIdx - 1] : null;
-
-  // Draw background cells
   for (let q = qMin; q <= qMax; q++) {
     for (let r = rMin; r <= rMax; r++) {
-      const [cx, cy] = hexToPixel(q, r);
-      const key = `${q},${r}`;
-      const p = _replayBoard[key];
-      hexPath(cx, cy, size);
+      const [cx, cy] = toXY(q, r);
+      const key = `${q},${r}`, p = _replayBoard[key];
+      const isLast = lastMove && lastMove[0] === q && lastMove[1] === r;
+      hexPath(cx, cy, sz);
       if (p == null) {
-        ctx.fillStyle = HEX_COLORS.empty;
-        ctx.strokeStyle = HEX_COLORS.emptyB;
-        ctx.lineWidth = 0.5;
+        ctx.fillStyle = '#0d1520'; ctx.strokeStyle = '#1c2a3a'; ctx.lineWidth = 0.5;
       } else {
-        ctx.fillStyle = p === 1 ? HEX_COLORS.p1 : HEX_COLORS.p2;
-        const isLast = lastMove && lastMove[0] === q && lastMove[1] === r;
-        ctx.strokeStyle = isLast ? HEX_COLORS.last : (p === 1 ? HEX_COLORS.p1b : HEX_COLORS.p2b);
-        ctx.lineWidth = isLast ? 2.5 : 1;
+        ctx.fillStyle   = p === 1 ? '#7a4a0a' : '#0a3a6a';
+        ctx.strokeStyle = isLast ? '#ffffff' : (p === 1 ? '#c97b1a' : '#1a5fa0');
+        ctx.lineWidth   = isLast ? 2 : 1;
       }
       ctx.fill(); ctx.stroke();
       if (p != null) {
-        ctx.fillStyle = p === 1 ? HEX_COLORS.p1b : HEX_COLORS.p2b;
-        ctx.font = `bold ${Math.max(6, Math.floor(size * 0.6))}px Courier New`;
+        ctx.fillStyle = p === 1 ? '#e8a020' : '#4a9fe8';
+        ctx.font = `bold ${Math.max(7, Math.floor(sz * 0.55))}px Courier New`;
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillText(p === 1 ? 'X' : 'O', cx, cy);
       }
     }
   }
 
-  // Update info
-  const move = _replayIdx;
-  document.getElementById('r-move').textContent = move;
-  if (move > 0) {
+  // move counter
+  document.getElementById('r-move').textContent = _replayIdx;
+  if (_replayIdx > 0) {
     let cur = 1, placed = 0;
-    for (let i = 0; i < move - 1; i++) {
-      placed++;
-      if (placed >= (i < 1 ? 1 : 2)) { cur = 3 - cur; placed = 0; }
+    for (let i = 0; i < _replayIdx - 1; i++) {
+      placed++; if (placed >= (i < 1 ? 1 : 2)) { cur = 3 - cur; placed = 0; }
     }
-    document.getElementById('r-player').textContent = cur === 1 ? 'X' : 'O';
+    document.getElementById('r-player').textContent = cur === 1 ? 'X (P1)' : 'O (P2)';
   } else {
-    document.getElementById('r-player').textContent = '\u2014';
+    document.getElementById('r-player').textContent = '—';
   }
 }
-
-// Resize canvas when window resizes
 window.addEventListener('resize', () => { if (_replayData) replayDraw(); });
 </script>
 </body>

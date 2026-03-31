@@ -123,9 +123,9 @@ REPLAY_DIR.mkdir(exist_ok=True)
 
 BUFFER_CAP    = 50_000
 EVAL_GAMES    = 20
-NUM_WORKERS   = 8       # 1a: increased from 4 — more concurrent games fill the batch
-INF_BATCH     = 8       # 1a: inference server max batch size (match NUM_WORKERS)
-INF_TIMEOUT   = 30      # 1a: ms to wait for a full batch (was 5ms — too short for MCTS think time)
+NUM_WORKERS   = 16      # more concurrent games keeps batch full as short games finish early
+INF_BATCH     = 16      # match NUM_WORKERS
+INF_TIMEOUT   = 10      # ms — inference is now ~2ms so 30ms was over-waiting; 10ms balances latency vs batching
 
 # Tunable via config.py (autotune)
 BATCH_SIZE    = CFG["BATCH_SIZE"]
@@ -260,7 +260,7 @@ def self_play_episode(server: InferenceServer, sims: int, temp_horizon: int = 40
     adversary: optional Agent (e.g. EisensteinGreedyAgent) that controls
         adversary_player instead of the net — curriculum training partner.
     """
-    MAX_MOVES = 300   # placements; beyond this declare draw to prevent runaway games
+    MAX_MOVES = 150   # placements; beyond this declare draw — 300 was allowing random-net games to drag for minutes
     game = HexGame()
     positions = []
     prev_root = None
@@ -655,7 +655,7 @@ def load_latest(net: HexNet) -> int:
 
 # ── Main training loop ────────────────────────────────────────────────────────
 
-def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20, tune_mode: bool = False):
+def train(n_gens: int = 50, sims: int = CFG["SIMS"], games_per_gen: int = 20, tune_mode: bool = False):
     log.info("=== HexGo Training ===")
     log.info("Device=%s  Params=%s  SIMS=%d  GAMES/GEN=%d",
              DEVICE, f"{param_count(HexNet()):,}", sims, games_per_gen)
@@ -667,7 +667,16 @@ def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20, tune_mode:
         log.info("Initialized HexConv2d kernels with hex-Laplacian CA priors.")
 
     optimizer = optim.Adam(net.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(n_gens, 1), eta_min=LR * 0.01)
+    # Warmup for first 5 gens: LR scales from LR/10 → LR, then cosine decay to LR*0.01.
+    # Prevents the gen-1 loss spike caused by a high LR hammering a tiny buffer.
+    WARMUP_GENS = 5
+    def lr_lambda(gen_idx):  # gen_idx is 0-based steps from scheduler
+        if gen_idx < WARMUP_GENS:
+            return 0.1 + 0.9 * gen_idx / WARMUP_GENS
+        cosine_progress = (gen_idx - WARMUP_GENS) / max(n_gens - WARMUP_GENS, 1)
+        cosine_val = 0.5 * (1 + math.cos(math.pi * cosine_progress))
+        return 0.01 + 0.99 * cosine_val  # decays from 1.0 → 0.01
+    scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
     scaler = torch.amp.GradScaler(enabled="cuda" in str(DEVICE))
     elo = ELO()
     buffer: deque = deque(maxlen=BUFFER_CAP)
@@ -703,7 +712,7 @@ def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20, tune_mode:
 
         def run_one_game(g_idx):
             t0 = time.perf_counter()
-            adv = eisenstein_adv if (g_idx % 5 == 0) else None
+            adv = eisenstein_adv if (g_idx % 5 != 0) else None  # 80% vs Eisenstein, 20% self-play
             # 2b: KataGo playout cap — per-game sims budget
             game_sims = _cap_sims(cur_sims)
             data, winner, moves = self_play_episode(server, game_sims,
@@ -748,9 +757,10 @@ def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20, tune_mode:
                         first_saved = True
 
                 # Train overlapped with remaining self-play.
-                # Cap at WEIGHT_SYNC_BATCHES per loop iteration to prevent
-                # overfit when self-play is slow and buffer is stale.
-                if len(buffer) >= BATCH_SIZE and batches_since_sync < WEIGHT_SYNC_BATCHES:
+                # Cap total overlap batches to 1 pass over current buffer size to prevent
+                # overfitting when self-play is fast and buffer is small (gen 1 spike).
+                max_overlap = max(1, len(buffer) // BATCH_SIZE)
+                if len(buffer) >= BATCH_SIZE and batches_since_sync < WEIGHT_SYNC_BATCHES and len(losses) < max_overlap:
                     perf.start("overlap_train")
                     result = train_batch(net, optimizer, scaler, buffer)
                     perf.stop("overlap_train")
@@ -787,9 +797,9 @@ def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20, tune_mode:
                  server.cache_hits, server.persistent_hits)
         log.info("  Inference: %s", server.latency_summary())
 
-        # Post-game training: continue for remaining batch budget
+        # Post-game training: top up to 1 pass over the buffer, no more.
         perf.start("post_train")
-        n_extra = max(0, max(10, total_positions // BATCH_SIZE) - len(losses))
+        n_extra = max(0, len(buffer) // BATCH_SIZE - len(losses))
         for _ in range(n_extra):
             result = train_batch(net, optimizer, scaler, buffer)
             if result:
@@ -890,7 +900,7 @@ def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20, tune_mode:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--gens",  type=int, default=50,  help="Generations to train")
-    parser.add_argument("--sims",  type=int, default=100, help="MCTS sims per move")
+    parser.add_argument("--sims",  type=int, default=CFG["SIMS"], help="MCTS sims per move")
     parser.add_argument("--games", type=int, default=20,  help="Self-play games per gen")
     parser.add_argument("--tune",  action="store_true",   help="Tune mode: greedy-only eval, no tournament, writes tune_result.json")
     args = parser.parse_args()
