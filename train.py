@@ -125,7 +125,7 @@ BUFFER_CAP    = 50_000
 EVAL_GAMES    = 20
 NUM_WORKERS   = 16      # more concurrent games keeps batch full as short games finish early
 INF_BATCH     = 16      # match NUM_WORKERS
-INF_TIMEOUT   = 15      # ms — inference is now ~2ms so 30ms was over-waiting; 10ms balances latency vs batching
+INF_TIMEOUT   = 30      # ms — inference is now ~2ms so 30ms was over-waiting; 10ms balances latency vs batching
 
 # Tunable via config.py (autotune)
 BATCH_SIZE    = CFG["BATCH_SIZE"]

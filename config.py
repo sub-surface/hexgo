@@ -3,11 +3,11 @@
 # Imported by train.py and mcts.py at startup.
 
 CFG = {
-    "LR": 0.003,
-    "WEIGHT_DECAY": 0.001,
+    "LR": 0.001,
+    "WEIGHT_DECAY": 0.0001,
     "BATCH_SIZE": 64,
-    "SIMS": 25,
-    "SIMS_MIN": 6,
+    "SIMS": 100,
+    "SIMS_MIN": 25,
     "CAP_FULL_FRAC": 0,
     "CPUCT": 1.5,
     "DIRICHLET_ALPHA": 0.09,
