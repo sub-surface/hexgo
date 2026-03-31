@@ -151,6 +151,9 @@ def _metrics_watcher():
         if not METRICS_FILE.exists():
             continue
         try:
+            # Detect file truncation (e.g. new training run cleared metrics)
+            if METRICS_FILE.stat().st_size < pos:
+                pos = 0
             with open(METRICS_FILE, "r", encoding="utf-8") as f:
                 f.seek(pos)
                 for line in f:
@@ -220,20 +223,48 @@ def api_elo():
 
 @app.get("/api/config")
 def api_config():
-    ns: dict = {}
-    exec(CONFIG_FILE.read_text(encoding="utf-8"), ns)
-    return ns.get("CFG", {})
+    import ast, re
+    text = CONFIG_FILE.read_text(encoding="utf-8")
+    # Strip inline comments for safe parsing
+    lines = [line.split("#")[0] for line in text.splitlines()]
+    clean = "\n".join(lines)
+    match = re.search(r'CFG\s*=\s*(\{.*?\})', clean, re.DOTALL)
+    if not match:
+        raise HTTPException(status_code=500, detail="CFG not found in config.py")
+    try:
+        return ast.literal_eval(match.group(1))
+    except (ValueError, SyntaxError) as e:
+        raise HTTPException(status_code=500, detail=f"Failed to parse config: {e}")
 
 
 @app.post("/api/config")
 def api_config_write(cfg: dict):
     """Overwrite config.py with the staged values from the frontend."""
-    ns: dict = {}
-    exec(CONFIG_FILE.read_text(encoding="utf-8"), ns)
-    current = ns.get("CFG", {})
+    import ast, re
+    text = CONFIG_FILE.read_text(encoding="utf-8")
+    lines_raw = [line.split("#")[0] for line in text.splitlines()]
+    clean = "\n".join(lines_raw)
+    match = re.search(r'CFG\s*=\s*(\{.*?\})', clean, re.DOTALL)
+    if not match:
+        raise HTTPException(status_code=500, detail="CFG not found in config.py")
+    try:
+        current = ast.literal_eval(match.group(1))
+    except (ValueError, SyntaxError) as e:
+        raise HTTPException(status_code=500, detail=f"Failed to parse config: {e}")
     unknown = [k for k in cfg if k not in current]
     if unknown:
         raise HTTPException(status_code=400, detail=f"Unknown config keys: {unknown}")
+    # Validate types: allow int/float interchangeability, reject everything else
+    for k, v in cfg.items():
+        if isinstance(current[k], (int, float)) and isinstance(v, (int, float)):
+            continue
+        if isinstance(current[k], bool) and isinstance(v, bool):
+            continue
+        if isinstance(current[k], str) and isinstance(v, str):
+            continue
+        if type(v) != type(current[k]):
+            raise HTTPException(status_code=400,
+                detail=f"Invalid type for {k}: expected {type(current[k]).__name__}, got {type(v).__name__}")
     lines = [
         "# config.py — tunable hyperparameters for HexGo autotune",
         "# Edit this file to propose a new trial config.",
