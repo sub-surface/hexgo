@@ -12,12 +12,12 @@ checkpoints/*.pt
 checkpoints/legacy/*.pt
 
 # Logs
-*.log
-train.log
-hexgo.log
-metrics.jsonl
-tune_log.jsonl
-tune_result.json
+# *.log
+# train.log
+# hexgo.log
+# metrics.jsonl
+# tune_log.jsonl
+# tune_result.json
 
 # Generated replay artifacts
 replays/*.json
