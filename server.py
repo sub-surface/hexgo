@@ -152,6 +152,9 @@ def _metrics_watcher():
         if not METRICS_FILE.exists():
             continue
         try:
+            # Detect file truncation (e.g. new training run overwrote metrics.jsonl)
+            if METRICS_FILE.stat().st_size < pos:
+                pos = 0
             with open(METRICS_FILE, "r", encoding="utf-8") as f:
                 f.seek(pos)
                 for line in f:
@@ -248,6 +251,20 @@ def api_config_write(cfg: dict):
     unknown = [k for k in cfg if k not in current]
     if unknown:
         raise HTTPException(status_code=400, detail=f"Unknown config keys: {unknown}")
+    # Type validation: allow int/float interchangeability, reject everything else
+    for k, v in cfg.items():
+        expected = type(current[k])
+        if isinstance(current[k], bool):
+            if not isinstance(v, bool):
+                raise HTTPException(status_code=400,
+                    detail=f"Invalid type for {k}: expected bool, got {type(v).__name__}")
+        elif isinstance(current[k], (int, float)):
+            if not isinstance(v, (int, float)):
+                raise HTTPException(status_code=400,
+                    detail=f"Invalid type for {k}: expected {expected.__name__}, got {type(v).__name__}")
+        elif not isinstance(v, expected):
+            raise HTTPException(status_code=400,
+                detail=f"Invalid type for {k}: expected {expected.__name__}, got {type(v).__name__}")
     lines = [
         "# config.py — tunable hyperparameters for HexGo autotune",
         "# Edit this file to propose a new trial config.",

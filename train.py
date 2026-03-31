@@ -14,7 +14,7 @@ Key design choices:
 - Each game contributes (board_tensor, move_plane, z) triples where
   z = +1 for winner's moves, -1 for loser's moves (propagated back)
 - Policy target = visit count distribution from MCTS root (not argmax)
-- Tree reuse between moves (1c): chosen child subtree recycled as next root
+- Tree reuse disabled (see mcts_policy TODO): fresh root built each move
 - ELO updated every generation via run_match()
 """
 
@@ -177,38 +177,26 @@ def mcts_policy(game: HexGame, server: InferenceServer, sims: int,
     rather than building a new tree from scratch. Pass the returned new_root as
     prev_root on the next call to recycle ~N/branching_factor simulations for free.
     """
-    # 1c: Tree reuse — use existing subtree if available
-    # Try to reuse previous subtree; fall back to fresh root if stale or empty
-    reused = False
-    if prev_root is not None and prev_root.children:
-        prev_root.parent = None
-        valid_children = [c for c in prev_root.children if c.move not in game.board]
-        if valid_children:
-            root = prev_root
-            root.children = valid_children
-            moves = [c.move for c in root.children]
-            _da, _de = CFG["DIRICHLET_ALPHA"], CFG["DIRICHLET_EPS"]
-            noise = np.random.dirichlet([_da] * len(moves))
-            for c, n in zip(root.children, noise):
-                c.prior = (1 - _de) * c.prior + _de * float(n)
-            reused = True
+    # Tree reuse disabled: naive filtering of prev_root.children by board occupancy
+    # retains stale siblings with visit counts from a different game state, corrupting search.
+    # Correct reuse requires descending through all intermediate moves (opponent turns,
+    # second placements under 1-2-2) to find the correct subtree.
+    # TODO: implement correct tree descent through intermediate moves.
+    root = Node(player=game.current_player)
+    value, policy = server.evaluate(game)
+    moves = game.zoi_moves(ZOI_MARGIN, ZOI_LOOKBACK)  # ZOI pruning: ~80-90% branch reduction
+    if not moves:
+        return None, None, [], None
 
-    if not reused:
-        root = Node(player=game.current_player)
-        value, policy = server.evaluate(game)
-        moves = game.zoi_moves(ZOI_MARGIN, ZOI_LOOKBACK)  # ZOI pruning: ~80-90% branch reduction
-        if not moves:
-            return None, None, [], None
+    logits = np.array([policy.get(m, 0.0) for m in moves], dtype=np.float32)
+    logits -= logits.max()
+    priors = np.exp(logits); priors /= priors.sum()
 
-        logits = np.array([policy.get(m, 0.0) for m in moves], dtype=np.float32)
-        logits -= logits.max()
-        priors = np.exp(logits); priors /= priors.sum()
-
-        _da, _de = CFG["DIRICHLET_ALPHA"], CFG["DIRICHLET_EPS"]
-        noise = np.random.dirichlet([_da] * len(moves))
-        priors = (1 - _de) * priors + _de * noise
-        root.children = [Node(move=m, parent=root, prior=float(p), player=game.current_player)
-                         for m, p in zip(moves, priors)]
+    _da, _de = CFG["DIRICHLET_ALPHA"], CFG["DIRICHLET_EPS"]
+    noise = np.random.dirichlet([_da] * len(moves))
+    priors = (1 - _de) * priors + _de * noise
+    root.children = [Node(move=m, parent=root, prior=float(p), player=game.current_player)
+                     for m, p in zip(moves, priors)]
 
     for _ in range(sims):
         node = root
@@ -266,8 +254,7 @@ def self_play_episode(server: InferenceServer, sims: int, temp_horizon: int = 40
     3a (cosine temp annealing): temperature decays smoothly from 1→0.05 over
         temp_horizon moves via max(0.05, cos(π/2·move/T)). Reaches floor at
         move=T (half-cosine, T is the full-life not half-life).
-    1c (tree reuse): chosen child node is recycled as the root for the next call,
-        inheriting its subtree and saving ~sims/branching_factor sims per move.
+    Tree reuse is disabled (prev_root ignored); fresh root built each move.
     3b (TD-lambda targets): z_t = gamma^(T-1-t) * z_final instead of uniform ±1,
         making early-game positions less certain and speeding value head convergence.
     adversary: optional Agent (e.g. EisensteinGreedyAgent) that controls
@@ -444,6 +431,7 @@ def train_batch(net: HexNet, optimizer, scaler, buffer: deque) -> dict:
             # Per-item log_softmax via segment offsets
             offset = 0
             entropies_batch = []
+            loss_ent = torch.tensor(0.0, device=DEVICE)  # differentiable entropy accumulator
             for i, cnt in enumerate(item_counts):
                 if cnt == 0:
                     continue
@@ -451,9 +439,11 @@ def train_batch(net: HexNet, optimizer, scaler, buffer: deque) -> dict:
                 seg_probs  = probs_t[offset:offset + cnt]
                 log_preds  = F.log_softmax(seg_logits, dim=0)
                 loss_p    += -(seg_probs * log_preds).sum()
+                preds = F.softmax(seg_logits, dim=0)
+                ent_tensor = -(preds * log_preds).sum()   # kept in graph for gradient flow
+                loss_ent  += ent_tensor
                 with torch.no_grad():
-                    preds = F.softmax(seg_logits, dim=0)
-                    ent = -(preds * log_preds).sum().item()
+                    ent = ent_tensor.item()
                     batch[i]["entropy"] = ent
                     entropies_batch.append(ent)
                 offset += cnt
@@ -461,12 +451,11 @@ def train_batch(net: HexNet, optimizer, scaler, buffer: deque) -> dict:
         if n_p > 0:
             loss_p /= n_p
 
-        # Entropy regularization — reward high-entropy policies to prevent premature collapse.
-        # H(π) = -∑ p log p is already computed per item; average over batch and subtract.
+        # Entropy regularization — subtract differentiable loss_ent so gradients flow
+        # to the policy head. Using detached scalars (old code) produced zero gradient.
         ent_reg = CFG.get("ENTROPY_REG", 0.0)
         if ent_reg > 0 and n_p > 0:
-            avg_batch_ent = sum(b.get("entropy", 0.0) for b in batch) / n_p
-            loss_p = loss_p - ent_reg * avg_batch_ent
+            loss_p = loss_p - ent_reg * (loss_ent / n_p)
 
         # Auxiliary losses — ownership (MSE) + threat (BCE), if labels present
         loss_aux = torch.tensor(0.0, device=DEVICE)

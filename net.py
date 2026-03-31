@@ -358,9 +358,9 @@ class HexNet(nn.Module):
         self.hidden = hidden
         self.n_blocks = n_blocks
 
-        # Trunk
+        # Trunk — HexConv2d in stem ensures hex geometry prior from the very first layer
         self.stem = nn.Sequential(
-            nn.Conv2d(IN_CH, hidden, 3, padding=1, bias=False),
+            HexConv2d(IN_CH, hidden, bias=False),
             nn.BatchNorm2d(hidden),
             nn.ReLU(),
         )
