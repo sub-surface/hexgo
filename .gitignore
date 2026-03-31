@@ -19,6 +19,10 @@ metrics.jsonl
 tune_log.jsonl
 tune_result.json
 
+# Generated replay artifacts
+replays/*.json
+replays/*.png
+
 # Backup files
 *.bak
 

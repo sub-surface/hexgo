@@ -239,15 +239,6 @@ def test_legal_moves_after_play():
     assert len(moves) == 6  # exactly 6 neighbors
 
 
-def test_tensor_shape():
-    g = HexGame()
-    g.play(0, 0)
-    t = g.to_tensor(size=5)
-    assert len(t) == 3
-    assert len(t[0]) == 11
-    assert len(t[0][0]) == 11
-
-
 # ── neural net encoding tests ─────────────────────────────────────────────────
 
 def test_encode_board_state_channels():
@@ -423,7 +414,6 @@ if __name__ == "__main__":
         test_deep_undo_consistency,
         test_legal_moves_empty,
         test_legal_moves_after_play,
-        test_tensor_shape,
         test_encode_board_state_channels,
         test_encode_board_history_channels,
         test_encode_board_history_undo,
@@ -443,7 +433,7 @@ if __name__ == "__main__":
             ms = (time.perf_counter() - t0) * 1000
             print(f"  PASS  {t.__name__:<45} ({ms:.1f}ms)")
             passed += 1
-        except (AssertionError, Exception) as e:
+        except Exception as e:
             ms = (time.perf_counter() - t0) * 1000
             print(f"  FAIL  {t.__name__:<45} ({ms:.1f}ms)  {e}")
             failed += 1

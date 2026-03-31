@@ -5,12 +5,12 @@ Usage: python replay.py replays/game_first_gen0001_*.json [--delay 0.3]
 
 import argparse
 import json
-import math
 import time
 from pathlib import Path
 
+from game import HexGame
+
 SYMBOLS = {1: "X", 2: "O"}
-DIRS = ((1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), (-1, 1))
 
 
 def render(board: dict, last_move: tuple | None, move_num: int, total: int):
@@ -47,22 +47,12 @@ def replay(path: str, delay: float = 0.4):
     print(f"Replaying: {Path(path).name}")
     print(f"Gen {gen} | {label} | {len(moves)} moves | winner: {'X' if winner==1 else 'O' if winner==2 else 'draw'}")
 
-    board: dict[tuple, int] = {}
-    current = 1
-    placements = 0
+    game = HexGame()
 
     for i, (q, r) in enumerate(moves):
-        board[(q, r)] = current
-        render(board, (q, r), i + 1, len(moves))
-        
-        placements += 1
-        is_first_turn = (i < 1) # first move only
-        limit = 1 if is_first_turn else 2
-        
-        if placements >= limit:
-            current = 3 - current
-            placements = 0
-            
+        game.make(q, r)
+        render(dict(game.board), (q, r), i + 1, len(moves))
+
         if delay > 0:
             time.sleep(delay)
 

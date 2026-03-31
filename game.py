@@ -164,19 +164,6 @@ class HexGame:
                 return True
         return False
 
-    def to_tensor(self, size: int = 11) -> list[list[list[int]]]:
-        """3 x dim x dim array: [p1 pieces, p2 pieces, current_player plane]."""
-        dim = 2 * size + 1
-        c0 = [[0] * dim for _ in range(dim)]
-        c1 = [[0] * dim for _ in range(dim)]
-        cp = self.current_player - 1
-        c2 = [[cp] * dim for _ in range(dim)]
-        for (q, r), p in self.board.items():
-            qi, ri = q + size, r + size
-            if 0 <= qi < dim and 0 <= ri < dim:
-                (c0 if p == 1 else c1)[ri][qi] = 1
-        return [c0, c1, c2]
-
     def clone(self) -> "HexGame":
         g = HexGame.__new__(HexGame)
         g.board = dict(self.board)
