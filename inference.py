@@ -277,7 +277,7 @@ class InferenceServer:
             self._graph_moves[:N].copy_(t_m)
             self._cuda_graph.replay()
             torch.cuda.synchronize()
-            # Slice to actual N rows
+            # Slice to actual N rows; val_idxs = start offset per request (first board row)
             val_idxs = [s for s, e, r, m, k in request_slices]
             values  = self._graph_val[val_idxs].detach().float().cpu().numpy()
             logits  = self._graph_pol[:N].detach().float().cpu().numpy()

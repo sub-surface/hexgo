@@ -404,46 +404,59 @@ def train_batch(net: HexNet, optimizer, scaler, buffer: deque) -> dict:
         val = net.value(f)
         loss_v = F.mse_loss(val, z_targets)
 
-        # Policy loss: cross-entropy against visit distribution for ALL legal moves
-        loss_p = torch.tensor(0.0, device=DEVICE)
-        n_p = 0
+        # Policy loss: batched cross-entropy over all legal moves across the full batch.
+        # Build flat lists of (feature_row, move_plane, prob) then run policy_logit once.
+        # Per-item softmax applied via segment offsets to handle variable move counts.
+        all_feat_rows = []   # board feature index into f for each (item, move) pair
+        all_planes    = []   # [1, S, S] move plane per (item, move) pair
+        all_probs     = []   # scalar probability per (item, move) pair
+        item_counts   = []   # number of valid moves per batch item (0 = skip)
+
         for i, item in enumerate(batch):
             oq, or_ = item["oq"], item["or_"]
-            moves = item["moves"]
-            probs_np = item["probs"]
-
-            # Filter moves within the 18x18 window (especially after D6 augmentation)
-            valid_indices = []
-            planes = []
-            for j, (q, r) in enumerate(moves):
+            valid_indices, planes = [], []
+            for j, (q, r) in enumerate(item["moves"]):
                 p = encode_move(q, r, oq, or_)
                 if p is not None:
                     valid_indices.append(j)
                     planes.append(p)
-
             if not planes:
+                item_counts.append(0)
                 continue
+            probs_np = item["probs"][valid_indices].astype(np.float32)
+            s = probs_np.sum()
+            probs_np = probs_np / s if s > 1e-6 else np.ones_like(probs_np) / len(probs_np)
+            n = len(planes)
+            all_feat_rows.extend([i] * n)
+            all_planes.extend(planes)
+            all_probs.extend(probs_np.tolist())
+            item_counts.append(n)
 
-            # Sub-sample and re-normalize probabilities for windowed moves
-            probs = torch.tensor(probs_np[valid_indices], dtype=torch.float32, device=DEVICE)
-            s = probs.sum()
-            if s > 1e-6:
-                probs /= s
-            else:
-                probs = torch.ones_like(probs) / len(probs)
+        loss_p = torch.tensor(0.0, device=DEVICE)
+        n_p = sum(1 for c in item_counts if c > 0)
+        if all_planes:
+            feat_rows = torch.tensor(all_feat_rows, dtype=torch.long, device=DEVICE)
+            move_t    = torch.tensor(np.stack(all_planes), device=DEVICE)   # [M, 1, S, S]
+            probs_t   = torch.tensor(all_probs, dtype=torch.float32, device=DEVICE)  # [M]
+            feats_exp = f[feat_rows]                                         # [M, C, S, S]
+            all_logits = net.policy_logit(feats_exp, move_t)                # [M]
 
-            move_t = torch.tensor(np.stack(planes), device=DEVICE)       # [N, 1, S, S]
-
-            feat_i = f[i:i+1].expand(len(planes), -1, -1, -1)
-            logits = net.policy_logit(feat_i, move_t)                    # [N]
-
-            log_preds = F.log_softmax(logits, dim=0)
-            loss_p += -(probs * log_preds).sum()
-            n_p += 1
-
-            with torch.no_grad():
-                preds = F.softmax(logits, dim=0)
-                item["entropy"] = -(preds * log_preds).sum().item()
+            # Per-item log_softmax via segment offsets
+            offset = 0
+            entropies_batch = []
+            for i, cnt in enumerate(item_counts):
+                if cnt == 0:
+                    continue
+                seg_logits = all_logits[offset:offset + cnt]
+                seg_probs  = probs_t[offset:offset + cnt]
+                log_preds  = F.log_softmax(seg_logits, dim=0)
+                loss_p    += -(seg_probs * log_preds).sum()
+                with torch.no_grad():
+                    preds = F.softmax(seg_logits, dim=0)
+                    ent = -(preds * log_preds).sum().item()
+                    batch[i]["entropy"] = ent
+                    entropies_batch.append(ent)
+                offset += cnt
 
         if n_p > 0:
             loss_p /= n_p
@@ -460,19 +473,17 @@ def train_batch(net: HexNet, optimizer, scaler, buffer: deque) -> dict:
         aux_w_own    = CFG["AUX_LOSS_OWN"]
         aux_w_threat = CFG["AUX_LOSS_THREAT"]
         if aux_w_own > 0 or aux_w_threat > 0:
-            has_aux = [b for b in batch if "own_label" in b]
-            if has_aux:
+            aux_indices = [i for i, b in enumerate(batch) if "own_label" in b]
+            if aux_indices:
+                has_aux   = [batch[i] for i in aux_indices]
                 own_np    = np.stack([b["own_label"]    for b in has_aux])
                 threat_np = np.stack([b["threat_label"] for b in has_aux])
-                boards_aux_np = np.stack([b["board"] for b in has_aux])
-                boards_aux = (torch.from_numpy(boards_aux_np).pin_memory()
-                              .to(DEVICE, non_blocking=True)
-                              if _CUDA else torch.tensor(boards_aux_np, device=DEVICE))
                 own_t    = (torch.from_numpy(own_np).pin_memory().to(DEVICE, non_blocking=True)
                             if _CUDA else torch.tensor(own_np, device=DEVICE))
                 threat_t = (torch.from_numpy(threat_np).pin_memory().to(DEVICE, non_blocking=True)
                             if _CUDA else torch.tensor(threat_np, device=DEVICE))
-                f_aux = net.trunk(boards_aux)
+                # Reuse trunk features already computed for this batch — no second forward pass
+                f_aux = f[aux_indices]
                 if aux_w_own > 0:
                     own_pred = net.ownership(f_aux)           # [N, S, S]
                     loss_aux = loss_aux + aux_w_own * F.mse_loss(own_pred, own_t)

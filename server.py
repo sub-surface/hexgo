@@ -16,6 +16,7 @@ Endpoints:
   GET  /events                 → SSE stream: metrics + status updates
 """
 
+import ast
 import asyncio
 import json
 import os
@@ -218,19 +219,32 @@ def api_elo():
     return json.loads(ELO_FILE.read_text(encoding="utf-8"))
 
 
+def _read_cfg() -> dict:
+    """
+    Parse CFG dict from config.py using ast — no exec(), no arbitrary code execution.
+    Walks the AST for the assignment `CFG = {...}` and evaluates the dict literal.
+    Raises ValueError if CFG is not a plain literal dict.
+    """
+    source = CONFIG_FILE.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id == "CFG"):
+            return ast.literal_eval(node.value)
+    raise ValueError("CFG dict not found in config.py")
+
+
 @app.get("/api/config")
 def api_config():
-    ns: dict = {}
-    exec(CONFIG_FILE.read_text(encoding="utf-8"), ns)
-    return ns.get("CFG", {})
+    return _read_cfg()
 
 
 @app.post("/api/config")
 def api_config_write(cfg: dict):
     """Overwrite config.py with the staged values from the frontend."""
-    ns: dict = {}
-    exec(CONFIG_FILE.read_text(encoding="utf-8"), ns)
-    current = ns.get("CFG", {})
+    current = _read_cfg()
     unknown = [k for k in cfg if k not in current]
     if unknown:
         raise HTTPException(status_code=400, detail=f"Unknown config keys: {unknown}")

@@ -30,7 +30,7 @@ CONFIG_FILE   = Path("config.py")
 CONFIG_BACKUP = Path("config.py.bak")
 TUNE_LOG      = Path("tune_log.jsonl")
 TUNE_RESULT   = Path("tune_result.json")
-PYTHON        = r"C:\Program Files\Python312\python.exe"
+PYTHON        = sys.executable
 
 
 def _read_elo(agent: str = "eisenstein_def") -> float | None:

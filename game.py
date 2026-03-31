@@ -127,20 +127,25 @@ class HexGame:
         if len(self.move_history) < lookback:
             return list(self.candidates)
 
-        # Focus: cells within margin of the most recently played pieces
+        # BFS expansion from each recent piece up to `margin` steps.
+        # Generates the reachable set directly — O(margin² × lookback) instead of
+        # O(lookback × |candidates|) distance checks per call.
         recent = self.move_history[-lookback:]
-        within: set[tuple[int, int]] = set()
+        reachable: set[tuple[int, int]] = set()
         for q0, r0 in recent:
-            for cq, cr in self.candidates:
-                if _hex_dist(q0, r0, cq, cr) <= margin:
-                    within.add((cq, cr))
-
-        # Safety: always include candidates adjacent to the very last move
-        lq, lr = self.move_history[-1]
-        for dq, dr in DIRS:
-            nb = (lq + dq, lr + dr)
-            if nb in self.candidates:
-                within.add(nb)
+            frontier = {(q0, r0)}
+            visited  = {(q0, r0)}
+            for _ in range(margin):
+                next_f: set[tuple[int, int]] = set()
+                for q, r in frontier:
+                    for dq, dr in DIRS:
+                        nb = (q + dq, r + dr)
+                        if nb not in visited:
+                            visited.add(nb)
+                            next_f.add(nb)
+                frontier = next_f
+                reachable |= frontier
+        within = reachable & self.candidates
 
         return list(within) if len(within) >= 3 else list(self.candidates)
 
