@@ -18,21 +18,25 @@ Each generation (as of 2026-03-30 simplification):
 
 All tunable params live in one dict. Edited by the autotune agent; read by `train.py` and `mcts.py` at startup.
 
-| Param | Default | Range | Notes |
-|-------|---------|-------|-------|
+| Param | Value | Range | Notes |
+|-------|-------|-------|-------|
 | `LR` | 1e-3 | 1e-4–5e-3 | Adam learning rate |
 | `WEIGHT_DECAY` | 1e-4 | — | L2 regularization |
 | `BATCH_SIZE` | 64 | 32, 64, 128 | Gradient batch size |
 | `SIMS` | 50 | 25–200 | Full simulation budget (25% of games) |
-| `SIMS_MIN` | 25 | 6–25 | Reduced budget floor (75% of games) — should be `SIMS // 8` for real diversity |
+| `SIMS_MIN` | 6 | 6–25 | Reduced budget floor (75% of games) — `SIMS // 8` for diversity |
 | `CAP_FULL_FRAC` | 0.25 | 0.1–0.5 | Fraction of games using full SIMS |
-| `CPUCT` | 1.0 | 1.0–3.0 | PUCT exploration constant (loaded at module import — process restart required to change) |
-| `DIRICHLET_ALPHA` | 0.3 | 0.1–0.5 | Root noise concentration (research: 10/\|ZoI\| ≈ 0.08–0.10) |
+| `CPUCT` | **2.0** | 1.0–3.0 | PUCT exploration constant — research target 2.0–2.5; loaded at module import (restart to change) |
+| `DIRICHLET_ALPHA` | **0.09** | 0.05–0.3 | Root noise concentration — `10/\|ZoI\| ≈ 0.09` for ZOI_MARGIN=6 |
 | `DIRICHLET_EPS` | 0.25 | 0.10–0.35 | Root noise weight |
 | `ZOI_MARGIN` | 6 | 3–8 | Hex-distance ZOI pruning radius |
 | `TD_GAMMA` | 0.99 | 0.95–1.0 | TD-lambda discount for value targets |
-| `TEMP_HORIZON` | 40 | 20–60 | Cosine temp annealing parameter (floor reached at `TEMP_HORIZON/2` moves due to cosine shape) |
+| `TEMP_HORIZON` | 40 | 20–60 | Cosine temp annealing parameter (floor reached at `TEMP_HORIZON` moves) |
 | `WEIGHT_SYNC_BATCHES` | 20 | 5–40 | Batches between weight sync to inference server |
+| `RECENCY_WEIGHT` | **0.75** | 0.5–1.0 | Fraction of each batch drawn from recent half of buffer |
+| `AUX_LOSS_OWN` | **0.1** | 0.0–0.5 | Ownership head loss weight (0 = disabled) |
+| `AUX_LOSS_THREAT` | **0.1** | 0.0–0.5 | Threat head loss weight (0 = disabled) |
+| `VALUE_LOSS_WEIGHT` | **2.0** | 1.0–5.0 | Multiplier on MSE value loss — prevents policy CE (~3.8) drowning value MSE (~0.1) by ~20× without it |
 
 ---
 
@@ -54,14 +58,15 @@ Each worker generates one game:
 
 ### Replay Buffer
 - FIFO `deque(maxlen=50000)` positions
-- Each entry: `{board, oq, or_, moves, probs, z}`
+- Each entry: `{board, oq, or_, moves, probs, z, own_label, threat_label, greedy_move}`
 - Zobrist hash deduplication per generation (prevents near-duplicate positions from same game)
+- **Recency-weighted sampling**: each batch draws `RECENCY_WEIGHT` fraction from the most-recent half of the buffer, remainder uniform. Prevents anchoring to early-training incompetent play.
 
 ---
 
 ## D6 Augmentation at Train Time
 
-`d6_augment_sample(item, tf_idx)` applies one of 12 D6 transforms to both the board array and move coordinates. The policy probability vector is permuted to match the transformed board. Applied at batch time (`tf_idx = random.randrange(12)`).
+`d6_augment_sample(item, tf_idx)` applies one of 12 D6 transforms to the board array, move coordinates, and aux label arrays (`own_label`, `threat_label`). Aux arrays use `_transform_aux()` — a dedicated single-channel spatial remap that avoids the `to-move` channel special-case in `_transform_board()`. The policy probability vector is permuted to match the transformed board. Applied at batch time (`tf_idx = random.randrange(12)`).
 
 Moves that fall outside the 18×18 window after transformation are dropped and the policy renormalized. The effective augmentation ratio is slightly below 12× for edge positions.
 
@@ -70,13 +75,35 @@ Moves that fall outside the 18×18 window after transformation are dropped and t
 ## Training Loss
 
 ```
-L = MSE(z, v) + CE(π, p) + c‖θ‖²
+L = VALUE_LOSS_WEIGHT·MSE(z, v) + CE(π, p) + AUX_OWN·MSE(own, own_pred) + AUX_THREAT·BCE(threat, threat_pred) + c‖θ‖²
 ```
 
-- Value loss: MSE against TD-lambda target
+- Value loss: MSE against TD-lambda target, scaled by `VALUE_LOSS_WEIGHT=2.0` to counter the ~20× scale gap between CE policy loss (~3.8) and MSE value loss (~0.1)
 - Policy loss: cross-entropy over all legal in-window moves, normalized by items that had at least one in-window move
+- Ownership aux loss: MSE on `[S, S]` map (+1=P1, -1=P2, 0=empty at game end); weight `AUX_LOSS_OWN=0.1`
+- Threat aux loss: BCE-with-logits on `[S, S]` binary map (1=cell on winning 6-in-a-row); weight `AUX_LOSS_THREAT=0.1`; AMP-safe (uses logits, not post-sigmoid)
 - Weight decay: L2 regularization (WEIGHT_DECAY, applied via Adam)
 - FP16 AMP via `torch.amp.GradScaler`
+
+Aux weights are kept small per the bitter-lesson principle: they guide trunk representation without dominating the main value+policy signal.
+
+### Per-Component Loss Logging
+
+`train_batch()` returns `{loss, loss_v, loss_p, loss_aux, entropy}`. The gen loop tracks these separately and logs:
+```
+Train: N batches  loss=X  loss_v=X  loss_p=X  aux=X  ent=X
+```
+All components are written to `metrics.jsonl` as `avg_loss`, `avg_loss_v`, `avg_loss_p`, `avg_aux`.
+
+---
+
+## Move Accuracy Metric (`compute_move_acc`)
+
+After ELO evaluation each generation, `compute_move_acc(net, buffer, n_samples=40)` samples 40 positions from the buffer and computes the fraction where the net's top-1 policy move (argmax over ZOI logits) matches `EisensteinGreedyAgent(defensive=True)`'s chosen move.
+
+The greedy agent's answer is captured at self-play time (stored as `greedy_move` in each buffer item) so the metric doesn't require reconstructing game state. Logged as `move_acc` in `metrics.jsonl` and shown on the dashboard MOVE ACC chart.
+
+Baseline: ~17% at gen 0 (random policy). Target: >40% after sustained training indicates the net has learned basic chain extension / threat blocking.
 
 ---
 

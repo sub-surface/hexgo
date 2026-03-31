@@ -76,8 +76,8 @@ Connection to combinatorics: W(6;2) = 1132 (van der Waerden); the Erdős-Selfrid
 - [x] **3b-iv. Latency / perf tracking** — `PerfTracker` with bottleneck warnings
 - [x] **3b-v. CPU offloading / pin_memory** — `non_blocking=True` async host→GPU transfers
 - [x] **3b-vi. Persistent cross-gen cache** — `_persistent_cache` with `CACHE_MAX_AGE=5` eviction
-- [ ] **3b-vii. Ownership + threat auxiliary heads** — 20-50% convergence speedup (4h effort; needs new CFG keys `AUX_LOSS_OWN`, `AUX_LOSS_THREAT`)
-- [ ] **3b-viii. Recency-weighted replay buffer** — 75% recent / 25% uniform (1h effort; add `RECENCY_WEIGHT` to CFG)
+- [x] **3b-vii. Ownership + threat auxiliary heads** — thin 1×1 conv heads off trunk; `make_aux_labels()` generates per-episode spatial labels; D6 transform extended to aux arrays via `_transform_aux()`; ownership=MSE, threat=BCE-with-logits (AMP-safe); `AUX_LOSS_OWN=0.1`, `AUX_LOSS_THREAT=0.1`
+- [x] **3b-viii. Recency-weighted replay buffer** — 75% from recent half / 25% uniform; `RECENCY_WEIGHT=0.75` in CFG; `train_batch()` splits sample accordingly
 - [ ] **3b-ix. MuZero-style reanalysis** — re-search buffered positions with updated net (4h effort)
 
 ---
@@ -91,7 +91,7 @@ Confirmed correctness bugs found in code review — all fixed as of 2026-03-30.
 - [x] **FIX-3: CRITICAL — Autotune reward signal inverted** — `tune.py`: `kept = elo_delta is None or elo_delta <= 0` (eisenstein_def ELO *rises* when net gets worse — negative delta = improvement).
 - [x] **FIX-4: IMPORTANT — `mcts_with_net` leaf children missing `player=`** — `mcts.py`: leaf children now use `player=game.current_player`.
 - [x] **FIX-5: IMPORTANT — Terminal expansion sign** — `mcts.py` + `train.py`: `v = 1.0 if game.winner == node.player else -1.0` (was always `1.0`); leaf value negated when `node.player != game.current_player`.
-- [x] **FIX-6: IMPORTANT — History planes filter via board dict** — `net.py`: `evaluate()` now computes trunk once; policy head uses expanded features (no board-dict cross-reference issue at inference time). `move_history` fix deferred — training path unaffected.
+- [x] **FIX-6: IMPORTANT — History planes filter via board dict** — `net.py`: history planes use `player_history` (parallel to `move_history`) — correct during MCTS `unmake()` traversal. Verified 2026-03-30; no board-dict cross-reference.
 - [x] **FIX-7: IMPORTANT — ZOI long-range threat blindness** — deferred; lookback increase is a config-level change with no current crash risk.
 - [x] **FIX-8: IMPORTANT — Autotune `SIMS_MIN` too high** — `config.py`: `SIMS_MIN` changed from `25` → `6`.
 - [x] **FIX-9: IMPORTANT — Cosine temp semantics** — `train.py`: formula fixed to `cos(π/2 × move / TEMP_HORIZON)` — reaches floor at `TEMP_HORIZON` moves (not `TEMP_HORIZON/2`).
@@ -141,12 +141,14 @@ Confirmed correctness bugs found in code review — all fixed as of 2026-03-30.
 | ✅ — | FIX-1 through FIX-10 | **done 2026-03-30** | Core correctness restored |
 | ✅ — | Dashboard (server.py + dashboard.html) | **done 2026-03-30** | Live monitoring |
 | ✅ — | Training simplification | **done 2026-03-30** | Stable long runs |
-| ✅ — | All Phase 0–3b-vi items | done | See sections above |
-| 🟡 1 | Fix history planes (FIX-6 deferred) | **todo** | Correct input during deep MCTS |
-| 🟡 2 | Aux heads (3b-vii) | **todo** | 20-50% convergence speedup |
-| 🟡 3 | Recency replay (3b-viii) | **todo** | Better policy tracking |
-| ⬜ 4 | CA weight init (4b) | future | Z[ω]-aligned priors |
-| ⬜ 5 | MuZero reanalysis (3b-ix) | future | Freshen stale targets |
-| ⬜ 6 | G-CNN equivariance (4a) | future | Principled symmetry |
-| ⬜ 7 | Scale trunk (5a) | future | Capacity |
-| ⬜ 8 | C++/Rust MCTS (5c) | future | True inference batching |
+| ✅ — | All Phase 0–3b-viii items | **done 2026-03-30** | See sections above |
+| ✅ — | CPUCT 1.0→2.0, DIRICHLET_ALPHA 0.3→0.09 | **done 2026-03-30** | Better exploration + root noise |
+| ✅ — | History planes (FIX-6) | **verified 2026-03-30** | Already correct via player_history |
+| ✅ — | Aux heads (3b-vii) | **done 2026-03-30** | Richer trunk representation |
+| ✅ — | Recency replay (3b-viii) | **done 2026-03-30** | Tracks current policy better |
+| ⬜ 1 | Run 50-gen baseline | next | Validate all improvements |
+| ⬜ 2 | MuZero reanalysis (3b-ix) | future | Freshen stale targets |
+| ⬜ 3 | CA weight init (4b) | future | Z[ω]-aligned priors |
+| ⬜ 4 | G-CNN equivariance (4a) | future | Principled symmetry |
+| ⬜ 5 | Scale trunk (5a) | future | Capacity (after plateau) |
+| ⬜ 6 | C++/Rust MCTS (5c) | future | True inference batching |

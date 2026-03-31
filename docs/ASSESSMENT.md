@@ -10,10 +10,11 @@ The architecture and mathematical foundation are **genuinely impressive** for a 
 The Z[ω] isomorphism, HexConv2d, D6 augmentation, GlobalPoolBranch, and the overall AlphaZero
 pipeline are implemented correctly in their essentials and show real depth of understanding.
 
-**As of 2026-03-30, all critical and important correctness bugs have been fixed.** The training
-pipeline is now sound and ready for sustained runs. A FastAPI dashboard (server.py + dashboard.html)
-provides live monitoring, training controls, and a replay viewer. The checkpoint tournament system
-was removed to eliminate a crash source; evaluation is now Eisenstein-only (~5s/gen vs. ~177s/gen).
+**As of 2026-03-30, all critical and important correctness bugs have been fixed, and the training
+pipeline has been further improved with hyperparameter tuning, recency-weighted sampling, and
+auxiliary heads.** A FastAPI dashboard (server.py + dashboard.html) provides live monitoring,
+training controls, and a replay viewer. The checkpoint tournament system was removed to eliminate
+a crash source; evaluation is now Eisenstein-only (~5s/gen vs. ~177s/gen).
 
 Previously identified critical bugs (now fixed):
 1. ~~**Autotune anti-optimizing**~~ — reward signal inverted; fixed in `tune.py`.
@@ -100,23 +101,16 @@ tournament was also consuming 100–177s/gen. Replaced by Eisenstein-only eval (
 
 ### Deferred — Lower Risk
 
-**History planes cross-reference board dict** (`net.py`)
-During deep MCTS after `unmake()`, pieces removed from `board` but still in `move_history`
-cause incorrect history channel encoding. Fix: store `(q, r, player)` in `move_history`
-instead of `(q, r)`. Training path is unaffected (no MCTS unmake during training data gen).
-
 **ZOI lookback blind spot** (`game.py`)
 `lookback=8` can miss early threats in long games. Conservative; increase to 16 or add
 a separate threat-line set if ELO growth stalls at mid-game complexity.
 
-### Misleading Documentation
+### Fixed in session 2 (2026-03-30)
 
-- `inference.py` module docstring: "355K-param net" — actual net is ~121K. Stale from old architecture.
-- `net.py:339`: `forward()` docstring says `[B, 3, S, S]` input; actual is `[B, 11, S, S]`.
-- `net.py:331`: comment says `[B, 2*S*S]`; actual shape is `[B, 4*S*S]` (p_conv outputs 4 channels).
-- `game.py:72`: comment says "len=0"; code correctly checks `len==1` (after `move_history.append`).
-- `mcts.py:127`: dead code `v = 0.0 if game.winner is not None` immediately overwritten.
-- `render.py/replay.py`: `abs(r)` indent formula visually wrong for negative-r positions.
+- ~~History planes cross-reference board dict~~ — verified correct: `player_history` already used.
+- ~~`net.py:339` comment `[B, 2*S*S]`~~ — fixed to `[B, 4*S*S]`.
+- ~~`net.py` forward docstring `[B, 3, S, S]`~~ — fixed to `[B, 11, S, S]`.
+- ~~`inference.py` comment `[3, S, S]`~~ — fixed to `[11, S, S]`.
 
 ---
 
@@ -141,25 +135,24 @@ produced with the inverted reward signal and are not meaningful.
 
 | Feature | Research Target | Current | Gap |
 |---------|----------------|---------|-----|
-| SIMS | 200-600 (Phase 1) | 50 (25% games), 25 (75%) | Large — but RTX 2060 constraint is real |
-| CPUCT | 2.5 (Phase 1) | 1.0 | Under-exploring; try 2.0-2.5 |
+| SIMS | 200-600 (Phase 1) | 50 (25% games), 6–25 (75%) | Large — RTX 2060 constraint |
+| CPUCT | 2.5 (Phase 1) | **2.0** ✓ | Minor; raise to 2.5 if ELO stalls |
 | Board size | 18×18 | 18×18 | ✓ |
-| Network depth | 8-15 blocks | 2 blocks | Underpowered for strong play; sufficient for Phase 1 validation |
-| Dirichlet alpha | 0.08-0.10 (10/|ZoI|) | 0.3 | Too noisy at root |
+| Network depth | 8-15 blocks | 2 blocks | Sufficient for Phase 1 validation |
+| Dirichlet alpha | 0.08-0.10 (10/\|ZoI\|) | **0.09** ✓ | ✓ |
 | ZoI margin | 3 minimum | 6 | Conservative but correct |
-| Auxiliary heads | KataGo ownership+threat | Not yet | 20-50% gain expected |
-| MCTS | PUCT standard | PUCT (Python) | No Gumbel search, no C++ — acceptable for Phase 1 |
+| Auxiliary heads | KataGo ownership+threat | **Done** ✓ | Thin 1×1 conv heads, AUX_LOSS=0.1 each |
+| Replay sampling | Recent-biased | **75/25** ✓ | ✓ |
+| MCTS | PUCT standard | PUCT (Python) | No Gumbel search, no C++ — Phase 1 acceptable |
 
 ---
 
 ## Next Steps
 
-All critical fixes are done. To continue improving:
+All improvements for Phase 1 are complete. Ready to run sustained baseline:
 
-1. **Run 50+ gen baseline** — verify ELO vs `eisenstein_def` improves monotonically with all fixes in.
-2. **Fix history planes** (`net.py`) — store `(q, r, player)` in `move_history` to correct history channels during deep MCTS.
-3. **Add auxiliary heads** (3b-vii) — ownership + threat prediction for 20–50% convergence speedup.
-4. **Tune CPUCT** — current value `1.0` is lower than research target `2.5`; test `2.0` first.
-5. **Reduce DIRICHLET_ALPHA** — current `0.3`; research suggests `10/|ZoI| ≈ 0.08–0.10` for stronger play.
+1. **Run 50+ gen baseline** — verify ELO vs `eisenstein_def` improves monotonically.
+2. **ZOI lookback** — increase from 8 to 16 if ELO stalls at mid-game complexity.
+3. **Scale trunk** (5a) — 4 blocks / 64 channels (~480K params) only after ELO plateau.
 
-A 50-gen run with the fixed pipeline should show meaningful ELO improvement vs `eisenstein_def`.
+A 50-gen run with the improved pipeline should show clear ELO progress vs `eisenstein_def`.

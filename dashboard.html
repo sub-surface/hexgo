@@ -112,6 +112,10 @@
       <div class="panel-title">ENTROPY</div>
       <div style="flex:1; min-height:0; position:relative;"><canvas id="chart-ent" style="position:absolute;inset:0;width:100%!important;height:100%!important;"></canvas></div>
     </div>
+    <div class="panel" style="flex:1; min-height:0; display:flex; flex-direction:column;">
+      <div class="panel-title">MOVE ACC</div>
+      <div style="flex:1; min-height:0; position:relative;"><canvas id="chart-acc" style="position:absolute;inset:0;width:100%!important;height:100%!important;"></canvas></div>
+    </div>
   </div>
   <!-- row 3: log tail -->
   <div class="panel" style="flex:0 0 120px; overflow:hidden; display:flex; flex-direction:column;">
@@ -215,22 +219,29 @@ const CHART_OPTS = (label, color) => ({
 const chartLoss = new Chart(document.getElementById('chart-loss'), CHART_OPTS('loss', '#388bfd'));
 const chartEis  = new Chart(document.getElementById('chart-eis'),  CHART_OPTS('eis_wr', '#3fb950'));
 const chartEnt  = new Chart(document.getElementById('chart-ent'),  CHART_OPTS('entropy', '#d29922'));
+const chartAcc  = new Chart(document.getElementById('chart-acc'),  CHART_OPTS('move_acc', '#bc8cff'));
 
 function pushMetric(d) {
   const gen = String(d.gen);
-  [chartLoss, chartEis, chartEnt].forEach(c => {
+  [chartLoss, chartEis, chartEnt, chartAcc].forEach(c => {
     if (!c.data.labels.includes(gen)) c.data.labels.push(gen);
   });
   const idx = chartLoss.data.labels.indexOf(gen);
   chartLoss.data.datasets[0].data[idx] = d.avg_loss;
   chartEis.data.datasets[0].data[idx]  = d.eis_winrate;
   chartEnt.data.datasets[0].data[idx]  = d.avg_ent;
-  [chartLoss, chartEis, chartEnt].forEach(c => c.update('none'));
+  chartAcc.data.datasets[0].data[idx]  = d.move_acc;
+  [chartLoss, chartEis, chartEnt, chartAcc].forEach(c => c.update('none'));
 
   // last gen stats
   document.getElementById('last-gen-stats').innerHTML = `
     <div class="stat-row"><span class="stat-key">Gen</span><span class="stat-val">${d.gen}</span></div>
     <div class="stat-row"><span class="stat-key">Loss</span><span class="stat-val">${d.avg_loss ?? '&mdash;'}</span></div>
+    <div class="stat-row"><span class="stat-key">Loss V</span><span class="stat-val">${d.avg_loss_v ?? '&mdash;'}</span></div>
+    <div class="stat-row"><span class="stat-key">Loss P</span><span class="stat-val">${d.avg_loss_p ?? '&mdash;'}</span></div>
+    <div class="stat-row"><span class="stat-key">Loss Aux</span><span class="stat-val">${d.avg_aux ?? '&mdash;'}</span></div>
+    <div class="stat-row"><span class="stat-key">Val Sigma</span><span class="stat-val">${d.avg_sigma ?? '&mdash;'}</span></div>
+    <div class="stat-row"><span class="stat-key">Move Acc</span><span class="stat-val">${d.move_acc ?? '&mdash;'}</span></div>
     <div class="stat-row"><span class="stat-key">Eis WR</span><span class="stat-val">${d.eis_winrate ?? '&mdash;'}</span></div>
     <div class="stat-row"><span class="stat-key">Buffer</span><span class="stat-val">${d.buffer_size ?? '&mdash;'}</span></div>
     <div class="stat-row"><span class="stat-key">Gen time</span><span class="stat-val">${d.gen_time_s ?? '&mdash;'}s</span></div>

@@ -105,19 +105,30 @@ CFG = {
     "WEIGHT_DECAY": 1e-4,
     "BATCH_SIZE": 64,
     "SIMS": 50,
-    "SIMS_MIN": 6,          # must be << SIMS (e.g. SIMS//8) for playout cap diversity
+    "SIMS_MIN": 6,              # must be << SIMS (e.g. SIMS//8) for playout cap diversity
     "CAP_FULL_FRAC": 0.25,
-    "CPUCT": 1.0,            # research suggests 2.0–2.5; worth tuning
-    "DIRICHLET_ALPHA": 0.3,  # research suggests 10/|ZoI| ≈ 0.08–0.10
+    "GUMBEL_SELECTION": True,   # Gumbel argmax root selection (vs softmax-temp sampling)
+    "CPUCT": 2.0,               # research target 2.0–2.5 (was 1.0)
+    "DIRICHLET_ALPHA": 0.09,    # 10/|ZoI| ≈ 0.09 for ZOI_MARGIN=6 (was 0.3)
     "DIRICHLET_EPS": 0.25,
     "ZOI_MARGIN": 6,
+    "ZOI_LOOKBACK": 16,         # recent moves defining ZOI focus (was hardcoded 8)
+    "TRUNK_BLOCKS": 4,          # residual blocks (was 2)
+    "TRUNK_CHANNELS": 64,       # hidden channels (was 32) — ~480K params total
+    "WEIGHT_INIT": "ca",        # "ca" = hex NCA Laplacian priors | "xavier" = standard
     "TD_GAMMA": 0.99,
-    "TEMP_HORIZON": 40,      # cosine reaches floor at TEMP_HORIZON moves (fixed formula)
+    "TEMP_HORIZON": 40,         # cosine reaches floor at TEMP_HORIZON moves
     "WEIGHT_SYNC_BATCHES": 20,
+    "RECENCY_WEIGHT": 0.75,     # fraction of each batch from recent half of buffer
+    "AUX_LOSS_OWN": 0.1,        # ownership head loss weight
+    "AUX_LOSS_THREAT": 0.1,     # threat head loss weight
+    "UNC_LOSS_WEIGHT": 0.1,     # value uncertainty head (Gaussian NLL) loss weight
+    "VALUE_LOSS_WEIGHT": 2.0,   # multiplier on MSE value loss — prevents policy CE dominating by ~20×
+    "ENTROPY_REG": 0.01,        # policy entropy regularization bonus weight
 }
 ```
 
-`CPUCT` is loaded at module import time — process restart required to change it.
+`CPUCT` and `TRUNK_*` are loaded at module import time — process restart required to change them.
 
 ---
 
@@ -137,9 +148,30 @@ autotune pipeline end-to-end.
 All confirmed correctness bugs (FIX-1 through FIX-10) are resolved. The training pipeline
 is sound. Dashboard is live. Ready for sustained multi-generation training runs.
 
+**Completed 2026-03-30 (session 2):**
+- `CPUCT` raised 1.0 → 2.0 (research target); `DIRICHLET_ALPHA` reduced 0.3 → 0.09 (10/|ZoI|)
+- Recency-weighted replay buffer: 75% recent half / 25% uniform per batch (`RECENCY_WEIGHT`)
+- Auxiliary heads: ownership (`aux_own`) + threat (`aux_threat`) thin 1×1 convs off trunk;
+  labels generated from game outcome; loss weights `AUX_LOSS_OWN=0.1`, `AUX_LOSS_THREAT=0.1`
+- History planes verified already correct (uses `player_history`, not board dict)
+- `VALUE_LOSS_WEIGHT=2.0`: fixes value head collapse caused by CE policy loss (~3.8) drowning MSE value loss (~0.1)
+- Per-component loss tracking (`loss_v`, `loss_p`, `loss_aux`) logged per gen and written to `metrics.jsonl`
+- Move accuracy metric (`move_acc`): top-1 policy agreement with `EisensteinGreedyAgent(defensive=True)`,
+  sampled from 40 buffer positions per gen; baseline ~17%; written to `metrics.jsonl` and dashboard MOVE ACC chart
+
+**Completed 2026-03-31 (session 3):**
+- Board window now centers on centroid of last 20 moves (`N_RECENT=20`) — fixes silent piece clipping for spread games
+- `ZOI_LOOKBACK=16` config key (was hardcoded 8) — wider threat coverage, autotune-able
+- Trunk scaled to 4 blocks × 64 channels (`TRUNK_BLOCKS`, `TRUNK_CHANNELS` in CFG) — ~480K params
+- CA weight init (`WEIGHT_INIT="ca"`): HexConv2d kernels initialized with hex-Laplacian NCA priors
+- Value uncertainty head (`value_var`): predicts σ² via Softplus; trained with Gaussian NLL (`UNC_LOSS_WEIGHT=0.1`); `avg_sigma` logged to metrics and dashboard
+- Gumbel root selection (`GUMBEL_SELECTION=True`): Gumbel argmax replaces softmax-temp sampling at root; better exploitation at low sim counts
+- Policy entropy regularization (`ENTROPY_REG=0.01`): `-β·H(π)` bonus in `loss_p` prevents premature policy collapse
+- All old checkpoints moved to `checkpoints/legacy/` — fresh start
+
 **Remaining open items:**
-- History planes during deep MCTS (minor impact on training path, affects ELO NetAgent quality)
-- Auxiliary heads (ownership + threat) — expected 20–50% convergence speedup
-- CPUCT and DIRICHLET_ALPHA tuning vs. research targets
+- C++/Rust MCTS for true inference batching (avg_batch_size > 2.0)
+- G-CNN full D6 equivariance (deferred — major rewrite)
+- MuZero reanalysis (deferred — compute cost)
 
 See `docs/ASSESSMENT.md` and `docs/ROADMAP.md` for full details.

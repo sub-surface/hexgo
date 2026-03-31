@@ -39,7 +39,7 @@ from torch import optim
 from game import HexGame
 from inference import InferenceServer, evict_stale_cache
 from mcts import Node, _backprop
-from net import HexNet, encode_board, encode_move, DEVICE, param_count, d6_augment_sample
+from net import HexNet, encode_board, encode_move, DEVICE, param_count, d6_augment_sample, make_aux_labels, init_weights_ca
 from elo import ELO, NetAgent, EisensteinGreedyAgent, run_match
 from config import CFG
 
@@ -133,6 +133,7 @@ LR            = CFG["LR"]
 WEIGHT_DECAY  = CFG["WEIGHT_DECAY"]
 SIMS_MIN      = CFG["SIMS_MIN"]
 ZOI_MARGIN    = CFG["ZOI_MARGIN"]
+ZOI_LOOKBACK  = CFG["ZOI_LOOKBACK"]
 CAP_FULL_FRAC = CFG["CAP_FULL_FRAC"]
 
 
@@ -195,7 +196,7 @@ def mcts_policy(game: HexGame, server: InferenceServer, sims: int,
     if not reused:
         root = Node(player=game.current_player)
         value, policy = server.evaluate(game)
-        moves = game.zoi_moves(ZOI_MARGIN)  # ZOI pruning: ~80-90% branch reduction
+        moves = game.zoi_moves(ZOI_MARGIN, ZOI_LOOKBACK)  # ZOI pruning: ~80-90% branch reduction
         if not moves:
             return None, None, [], None
 
@@ -222,7 +223,7 @@ def mcts_policy(game: HexGame, server: InferenceServer, sims: int,
             v, lp = server.evaluate(game)
             if node.player != game.current_player:
                 v = -v   # server.evaluate returns from game.current_player's POV
-            lmoves = game.zoi_moves(ZOI_MARGIN)
+            lmoves = game.zoi_moves(ZOI_MARGIN, ZOI_LOOKBACK)
             if lmoves:
                 ll = np.array([lp.get(m, 0.0) for m in lmoves], dtype=np.float32)
                 ll -= ll.max(); lpr = np.exp(ll); lpr /= lpr.sum()
@@ -237,11 +238,21 @@ def mcts_policy(game: HexGame, server: InferenceServer, sims: int,
     if temp == 0:
         dist = np.zeros_like(visits)
         dist[visits.argmax()] = 1.0
+        chosen = moves[visits.argmax()]
+    elif CFG.get("GUMBEL_SELECTION", False):
+        # Gumbel argmax: log(visits + ε) + Gumbel(0,1)/temp, then argmax.
+        # At temp=1 equivalent to sampling proportional to visits;
+        # at temp→0 converges to pure argmax — naturally anneals with cosine schedule.
+        eps = 1e-8
+        gumbel_noise = -np.log(-np.log(np.random.uniform(size=len(visits)) + eps) + eps)
+        logits = np.log(visits + eps) + gumbel_noise / max(temp, 1e-6)
+        best = logits.argmax()
+        dist = visits / visits.sum()          # policy target stays as visit proportions
+        chosen = moves[best]
     else:
         visits_t = visits ** (1.0 / temp)
         dist = visits_t / visits_t.sum()
-
-    chosen = moves[np.random.choice(len(moves), p=dist)]
+        chosen = moves[np.random.choice(len(moves), p=dist)]
     # 1c: return chosen child as new root for next call's tree reuse
     new_root = next((c for c in root.children if c.move == chosen), None)
     return chosen, dist, moves, new_root
@@ -267,6 +278,7 @@ def self_play_episode(server: InferenceServer, sims: int, temp_horizon: int = 40
     positions = []
     prev_root = None
     move_num = 0
+    _acc_agent = EisensteinGreedyAgent(name="_acc", defensive=True)  # for move_acc labels
 
     while game.winner is None and len(game.move_history) < MAX_MOVES:
         legal = game.legal_moves()
@@ -287,6 +299,8 @@ def self_play_episode(server: InferenceServer, sims: int, temp_horizon: int = 40
         # Using half-cosine: cos(π/2 * move/T) → 1.0 at move=0, 0.0 at move=T.
         temp = max(0.05, math.cos(math.pi / 2 * move_num / max(temp_horizon, 1)))
         board_arr, (oq, or_) = encode_board(game)
+        # Capture EisensteinGreedyAgent's preferred move at this position for move_acc metric
+        greedy_move = _acc_agent.choose_move(game)
         # 1c: pass prev_root for tree reuse
         chosen, dist, moves, new_root = mcts_policy(game, server, sims, temp,
                                                      prev_root=prev_root)
@@ -294,7 +308,7 @@ def self_play_episode(server: InferenceServer, sims: int, temp_horizon: int = 40
             break
         chosen_idx = moves.index(chosen)
         positions.append((board_arr, oq, or_, chosen, chosen_idx, dist, moves,
-                          game.current_player))
+                          game.current_player, greedy_move))
         if not game.make(*chosen):
             log.warning("MCTS returned illegal move %s", chosen)
             break
@@ -306,7 +320,7 @@ def self_play_episode(server: InferenceServer, sims: int, temp_horizon: int = 40
     winner = game.winner
     T = len(positions)
     training_data = []
-    for t, (board_arr, oq, or_, move, chosen_idx, dist, moves, player) in enumerate(positions):
+    for t, (board_arr, oq, or_, move, chosen_idx, dist, moves, player, greedy_move) in enumerate(positions):
         if winner is None:
             z = 0.0
         else:
@@ -331,12 +345,18 @@ def self_play_episode(server: InferenceServer, sims: int, temp_horizon: int = 40
         else:
             v_dist = np.ones_like(v_dist) / len(v_dist)
 
+        # Aux labels: ownership + threat relative to this position's window origin
+        own_lbl, threat_lbl = make_aux_labels(game, winner, oq, or_)
+
         training_data.append({
             "board": board_arr,
             "oq": oq, "or_": or_,
             "moves": valid_moves,
             "probs": v_dist,
             "z": z,
+            "own_label":    own_lbl,
+            "threat_label": threat_lbl,
+            "greedy_move":  greedy_move,
         })
 
     all_moves = list(game.move_history)  # ALL placements (net + adversary)
@@ -427,7 +447,48 @@ def train_batch(net: HexNet, optimizer, scaler, buffer: deque) -> dict:
 
         if n_p > 0:
             loss_p /= n_p
-        loss = loss_v + loss_p
+
+        # Entropy regularization — reward high-entropy policies to prevent premature collapse.
+        # H(π) = -∑ p log p is already computed per item; average over batch and subtract.
+        ent_reg = CFG.get("ENTROPY_REG", 0.0)
+        if ent_reg > 0 and n_p > 0:
+            avg_batch_ent = sum(b.get("entropy", 0.0) for b in batch) / n_p
+            loss_p = loss_p - ent_reg * avg_batch_ent
+
+        # Auxiliary losses — ownership (MSE) + threat (BCE), if labels present
+        loss_aux = torch.tensor(0.0, device=DEVICE)
+        aux_w_own    = CFG["AUX_LOSS_OWN"]
+        aux_w_threat = CFG["AUX_LOSS_THREAT"]
+        if aux_w_own > 0 or aux_w_threat > 0:
+            has_aux = [b for b in batch if "own_label" in b]
+            if has_aux:
+                own_np    = np.stack([b["own_label"]    for b in has_aux])
+                threat_np = np.stack([b["threat_label"] for b in has_aux])
+                boards_aux_np = np.stack([b["board"] for b in has_aux])
+                boards_aux = (torch.from_numpy(boards_aux_np).pin_memory()
+                              .to(DEVICE, non_blocking=True)
+                              if _CUDA else torch.tensor(boards_aux_np, device=DEVICE))
+                own_t    = (torch.from_numpy(own_np).pin_memory().to(DEVICE, non_blocking=True)
+                            if _CUDA else torch.tensor(own_np, device=DEVICE))
+                threat_t = (torch.from_numpy(threat_np).pin_memory().to(DEVICE, non_blocking=True)
+                            if _CUDA else torch.tensor(threat_np, device=DEVICE))
+                f_aux = net.trunk(boards_aux)
+                if aux_w_own > 0:
+                    own_pred = net.ownership(f_aux)           # [N, S, S]
+                    loss_aux = loss_aux + aux_w_own * F.mse_loss(own_pred, own_t)
+                if aux_w_threat > 0:
+                    thr_logits = net.threat_logits(f_aux)     # [N, S, S] raw logits
+                    loss_aux = loss_aux + aux_w_threat * F.binary_cross_entropy_with_logits(
+                        thr_logits, threat_t)
+
+        # Value uncertainty loss — Gaussian NLL: 0.5*(log(σ²) + (z-v)²/σ²)
+        loss_unc = torch.tensor(0.0, device=DEVICE)
+        unc_w = CFG.get("UNC_LOSS_WEIGHT", 0.0)
+        if unc_w > 0:
+            sigma2 = net.variance(f)                        # [B] > 0
+            loss_unc = 0.5 * (sigma2.log() + (z_targets - val) ** 2 / sigma2).mean()
+
+        loss = CFG["VALUE_LOSS_WEIGHT"] * loss_v + loss_p + loss_aux + unc_w * loss_unc
     # Scaled backpropagation
     if torch.isnan(loss):
         log.warning("NaN loss detected! Skipping batch.")
@@ -439,8 +500,58 @@ def train_batch(net: HexNet, optimizer, scaler, buffer: deque) -> dict:
     scaler.step(optimizer)
     scaler.update()
 
-    avg_ent = sum(b.get("entropy", 0) for b in batch) / BATCH_SIZE
-    return {"loss": loss.item(), "loss_v": loss_v.item(), "loss_p": loss_p.item(), "entropy": avg_ent}
+    avg_ent   = sum(b.get("entropy", 0) for b in batch) / BATCH_SIZE
+    avg_sigma = sigma2.detach().sqrt().mean().item() if unc_w > 0 else 0.0
+    return {"loss": loss.item(), "loss_v": loss_v.item(), "loss_p": loss_p.item(),
+            "loss_aux": loss_aux.item(), "loss_unc": loss_unc.item(),
+            "entropy": avg_ent, "avg_sigma": avg_sigma}
+
+
+# ── Move accuracy metric ─────────────────────────────────────────────────────
+
+def compute_move_acc(net: HexNet, buffer: deque, n_samples: int = 40) -> float:
+    """
+    Top-1 policy agreement rate between the net and EisensteinGreedyAgent (defensive).
+
+    For each sampled position we encode the board, run the net's policy head,
+    pick argmax move among legal ZOI moves, and check whether it matches the
+    greedy agent's choice stored at collection time.  Returns fraction in [0,1].
+    Items without a 'greedy_move' key (old buffer entries) are skipped.
+    """
+    eligible = [b for b in buffer if b.get("greedy_move") is not None]
+    if not eligible:
+        return 0.0
+    sample = random.sample(eligible, min(n_samples, len(eligible)))
+
+    net.eval()
+    correct = 0
+    with torch.no_grad():
+        for item in sample:
+            greedy = item["greedy_move"]
+            moves  = item["moves"]
+            oq, or_ = item["oq"], item["or_"]
+
+            # Build encoded move planes for legal moves within the ZOI window
+            planes, valid_moves = [], []
+            for q, r in moves:
+                p = encode_move(q, r, oq, or_)
+                if p is not None:
+                    planes.append(p)
+                    valid_moves.append((q, r))
+
+            if not planes:
+                continue
+
+            board_t = torch.tensor(item["board"][None], device=DEVICE)
+            f = net.trunk(board_t)
+            move_t = torch.tensor(np.stack(planes), device=DEVICE)          # [N,1,S,S]
+            feat_e = f.expand(len(planes), -1, -1, -1)
+            logits = net.policy_logit(feat_e, move_t)                       # [N]
+            best_idx = logits.argmax().item()
+            if valid_moves[best_idx] == greedy:
+                correct += 1
+
+    return correct / len(sample) if sample else 0.0
 
 
 # ── Policy heatmap ───────────────────────────────────────────────────────────
@@ -546,6 +657,9 @@ def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20, tune_mode:
 
     net = HexNet().to(DEVICE)
     start_gen = load_latest(net)
+    if start_gen == 0 and CFG.get("WEIGHT_INIT", "xavier") == "ca":
+        init_weights_ca(net)
+        log.info("Initialized HexConv2d kernels with hex-Laplacian CA priors.")
 
     optimizer = optim.Adam(net.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
     scaler = torch.amp.GradScaler(enabled="cuda" in str(DEVICE))
@@ -594,7 +708,7 @@ def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20, tune_mode:
 
         # 3a: Overlapped self-play + training
         WEIGHT_SYNC_BATCHES = CFG["WEIGHT_SYNC_BATCHES"]
-        losses, entropies = [], []
+        losses, loss_vs, loss_ps, entropies, aux_losses, sigmas = [], [], [], [], [], []
         batches_since_sync = 0
         workers = min(NUM_WORKERS, games_per_gen)
 
@@ -636,7 +750,11 @@ def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20, tune_mode:
                     perf.stop("overlap_train")
                     if result:
                         losses.append(result["loss"])
+                        loss_vs.append(result.get("loss_v", 0))
+                        loss_ps.append(result.get("loss_p", 0))
                         entropies.append(result.get("entropy", 0))
+                        aux_losses.append(result.get("loss_aux", 0))
+                        sigmas.append(result.get("avg_sigma", 0))
                         batches_since_sync += 1
 
                     if batches_since_sync >= WEIGHT_SYNC_BATCHES:
@@ -664,13 +782,20 @@ def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20, tune_mode:
             result = train_batch(net, optimizer, scaler, buffer)
             if result:
                 losses.append(result["loss"])
+                loss_vs.append(result.get("loss_v", 0))
+                loss_ps.append(result.get("loss_p", 0))
                 entropies.append(result.get("entropy", 0))
+                aux_losses.append(result.get("loss_aux", 0))
+                sigmas.append(result.get("avg_sigma", 0))
         perf.stop("post_train")
 
         if losses:
-            log.info("  Train: %d batches  avg_loss=%.4f  avg_ent=%.4f",
-                     len(losses), sum(losses) / len(losses),
-                     sum(entropies) / len(entropies))
+            n = len(losses)
+            log.info("  Train: %d batches  loss=%.4f  loss_v=%.4f  loss_p=%.4f  aux=%.4f  sigma=%.4f  ent=%.4f",
+                     n, sum(losses)/n, sum(loss_vs)/n, sum(loss_ps)/n,
+                     sum(aux_losses)/n if aux_losses else 0.0,
+                     sum(sigmas)/n if sigmas else 0.0,
+                     sum(entropies)/n)
         else:
             log.info("  Buffer too small to train (%d < %d)", len(buffer), BATCH_SIZE)
 
@@ -686,8 +811,9 @@ def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20, tune_mode:
         eis_n     = EVAL_GAMES // 2
         eis_match = run_match(net_agent, eis_agent, n_games=eis_n, elo=elo, verbose=False)
         eis_wins  = eis_match.get(f"wins_{net_agent.name}", 0)
-        log.info("  ELO eval vs eisenstein_def: win_rate=%.2f  ELO=%s",
-                 eis_wins / eis_n, elo.leaderboard()[:3])
+        move_acc_eval = compute_move_acc(net, buffer)
+        log.info("  ELO eval vs eisenstein_def: win_rate=%.2f  ELO=%s  move_acc=%.3f",
+                 eis_wins / eis_n, elo.leaderboard()[:3], move_acc_eval)
         perf.stop("eval")
 
         # Write per-gen result for tune.py to consume
@@ -712,12 +838,22 @@ def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20, tune_mode:
 
         # Dashboard metrics hook — append one line per gen to metrics.jsonl.
         # Written unconditionally so the dashboard always has data.
-        avg_loss = sum(losses) / len(losses) if losses else None
-        avg_ent  = sum(entropies) / len(entropies) if entropies else None
+        avg_loss   = sum(losses)    / len(losses)    if losses    else None
+        avg_ent    = sum(entropies) / len(entropies) if entropies else None
+        avg_loss_v = sum(loss_vs)   / len(loss_vs)   if loss_vs   else None
+        avg_loss_p = sum(loss_ps)   / len(loss_ps)   if loss_ps   else None
+        avg_aux    = sum(aux_losses) / len(aux_losses) if aux_losses else None
+        avg_sigma  = sum(sigmas)    / len(sigmas)    if sigmas    else None
+        move_acc   = move_acc_eval
         _metrics_line = {
             "gen":          gen,
-            "avg_loss":     round(avg_loss, 4) if avg_loss is not None else None,
-            "avg_ent":      round(avg_ent,  4) if avg_ent  is not None else None,
+            "avg_loss":     round(avg_loss,   4) if avg_loss   is not None else None,
+            "avg_loss_v":   round(avg_loss_v, 4) if avg_loss_v is not None else None,
+            "avg_loss_p":   round(avg_loss_p, 4) if avg_loss_p is not None else None,
+            "avg_aux":      round(avg_aux,    4) if avg_aux    is not None else None,
+            "avg_sigma":    round(avg_sigma,  4) if avg_sigma  is not None else None,
+            "avg_ent":      round(avg_ent,    4) if avg_ent    is not None else None,
+            "move_acc":     round(move_acc,   3),
             "eis_winrate":  round(eis_wins / eis_n, 3),
             "gen_time_s":   round(time.perf_counter() - t_gen, 1),
             "buffer_size":  len(buffer),

@@ -23,7 +23,7 @@ def main():
     args = parser.parse_args()
 
     url = f"http://127.0.0.1:{args.port}"
-    print(f"HexGo Dashboard → {url}")
+    print(f"HexGo Dashboard -> {url}")
 
     if not args.no_browser:
         # Open browser after a short delay so the server is ready

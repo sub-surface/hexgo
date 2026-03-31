@@ -109,7 +109,7 @@ class HexGame:
     def legal_moves(self) -> list[tuple[int, int]]:
         return list(self.candidates)
 
-    def zoi_moves(self, margin: int = 6) -> list[tuple[int, int]]:
+    def zoi_moves(self, margin: int = 6, lookback: int = 16) -> list[tuple[int, int]]:
         """
         Zone-of-Interest pruning: return only candidates within `margin` hex
         steps of the last `lookback` placed pieces. Keeps MCTS focused on the
@@ -122,8 +122,8 @@ class HexGame:
 
         Default margin=6 is conservative (covers the WIN_LENGTH); reduce to
         4-5 for faster play once the net is trained enough to not miss threats.
+        lookback default=16 matches ZOI_LOOKBACK config default.
         """
-        lookback = 8
         if len(self.move_history) < lookback:
             return list(self.candidates)
 

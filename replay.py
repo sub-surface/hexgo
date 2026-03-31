@@ -22,7 +22,7 @@ def render(board: dict, last_move: tuple | None, move_num: int, total: int):
     q_min, q_max = min(qs) - 1, max(qs) + 1
     r_min, r_max = min(rs) - 1, max(rs) + 1
 
-    print(f"\n── Move {move_num}/{total} ──")
+    print(f"\n-- Move {move_num}/{total} --")
     for r in range(r_min, r_max + 1):
         indent = " " * (r - r_min)
         row = []

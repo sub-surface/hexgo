@@ -3,11 +3,14 @@ HexNet — small ResNet policy+value network for hexagonal 6-in-a-row.
 
 Architecture rationale (see docs/DESIGN.md):
   - Input: 11 × 18 × 18 axial grid centered on board centroid (3 state + 8 history)
-  - 2 residual blocks, 32 channels — ~121K params
+  - 2 residual blocks, 32 channels — ~122K params
   - Value head: board → scalar win probability ∈ [-1, 1]
   - Policy head: (board, move_plane) → scalar logit
     Move plane is a 1-hot 18×18 map of the candidate move.
     This avoids a fixed output size and works for any board extent.
+  - Ownership head: board → [S, S] ∈ (-1, 1)  (+1=P1, -1=P2, 0=empty)
+  - Threat head: board → [S, S] ∈ (0, 1)  (1=cell on winning 6-in-a-row)
+  Both aux heads are thin 1×1 convs off the existing trunk — zero extra trunk compute.
 
 Device: CUDA if available, else CPU.
 """
@@ -18,15 +21,18 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from game import HexGame
+from config import CFG
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 BOARD_SIZE = 18          # increased from 15 (sees more of the infinite grid)
 N_HISTORY = 4            # 4c: history planes per player (last N moves)
 IN_CH = 3 + 2 * N_HISTORY  # p1, p2, to_move + 4 p1-history + 4 p2-history = 11
+N_RECENT = 20            # recent moves used to center the board window (tracks active play area)
 
-# Architecture sizes — swap by changing these two constants
-HIDDEN   = 32   # was 64 (4x fewer params → 4x faster inference)
-N_BLOCKS = 2    # was 4
+# Architecture sizes — read from CFG so they are tunable without code changes.
+# Kept as module constants so downstream code that imports HIDDEN/N_BLOCKS still works.
+HIDDEN   = CFG["TRUNK_CHANNELS"]   # 64 (was 32)
+N_BLOCKS = CFG["TRUNK_BLOCKS"]     # 4  (was 2)
 
 # ── D6 symmetry group of the hexagonal lattice Z[omega] ──────────────────────
 #
@@ -100,6 +106,26 @@ def _transform_board(board_arr: np.ndarray, tf_idx: int,
     return new_arr
 
 
+def _transform_aux(arr: np.ndarray, tf_idx: int,
+                   size: int = BOARD_SIZE) -> np.ndarray:
+    """Apply one D6 transform to a single [S, S] spatial label array."""
+    half = size // 2
+    M = D6_MATRICES[tf_idx]
+    qs = np.arange(size) - half
+    rs = np.arange(size) - half
+    q_grid, r_grid = np.meshgrid(qs, rs)
+    q_dst = M[0, 0] * q_grid + M[0, 1] * r_grid
+    r_dst = M[1, 0] * q_grid + M[1, 1] * r_grid
+    col_dst = (q_dst + half).astype(np.int32)
+    row_dst = (r_dst + half).astype(np.int32)
+    valid = (col_dst >= 0) & (col_dst < size) & (row_dst >= 0) & (row_dst < size)
+    src_rows_v = np.indices((size, size))[0][valid]
+    src_cols_v = np.indices((size, size))[1][valid]
+    new_arr = np.zeros((size, size), dtype=arr.dtype)
+    new_arr[row_dst[valid], col_dst[valid]] = arr[src_rows_v, src_cols_v]
+    return new_arr
+
+
 def d6_augment_sample(sample: dict, tf_idx: int) -> dict:
     """
     Return one D6-equivalent version of a training buffer sample.
@@ -121,13 +147,18 @@ def d6_augment_sample(sample: dict, tf_idx: int) -> dict:
         nr = int(M[1, 0] * q_rel + M[1, 1] * r_rel)
         new_moves.append((nq, nr))
 
-    return {
+    out = {
         'board': new_board,
         'oq': 0, 'or_': 0,
         'moves': new_moves,
         'probs': sample['probs'].copy(),   # copy to prevent in-place normalization corrupting buffer
         'z':     sample['z'],
     }
+    # Aux labels are spatial [S, S] arrays — apply the same D6 spatial remap.
+    for key in ('own_label', 'threat_label'):
+        if key in sample:
+            out[key] = _transform_aux(sample[key], tf_idx)
+    return out
 
 
 # ── Board encoding ────────────────────────────────────────────────────────────
@@ -145,9 +176,13 @@ def encode_board(game: HexGame, size: int = BOARD_SIZE) -> np.ndarray:
       7-10— player 2 last N_HISTORY moves (most recent = ch 7), one-hot each
     """
     half = size // 2
-    if game.board:
-        cq = sum(q for q, r in game.board) / len(game.board)
-        cr = sum(r for q, r in game.board) / len(game.board)
+    if game.move_history:
+        # Center on centroid of the last N_RECENT moves — tracks the active play area.
+        # Using recent moves (not all pieces) prevents the window drifting to an average
+        # that clips active threats when the game spreads across the infinite grid.
+        recent = game.move_history[-N_RECENT:]
+        cq = sum(q for q, r in recent) / len(recent)
+        cr = sum(r for q, r in recent) / len(recent)
         oq, or_ = round(cq), round(cr)
     else:
         oq, or_ = 0, 0
@@ -273,6 +308,45 @@ class GlobalPoolBranch(nn.Module):
         return x + g                                       # residual broadcast
 
 
+# ── CA weight initialization ─────────────────────────────────────────────────
+
+def init_weights_ca(net: "HexNet") -> None:
+    """
+    Initialize HexConv2d kernels with a discrete hex-Laplacian pattern.
+
+    The hex-7 neighbourhood (3×3 with corners [0,0] and [2,2] masked) is exactly
+    the NCA "perceive" kernel.  Setting weights to a normalized Laplacian:
+        center = 1.0, 6 neighbours = -1/6 each
+    gives each filter a Z[omega]-aligned diffusion prior — it detects local
+    deviation from the neighbourhood mean, which is the natural substrate for
+    chain detection along the three Eisenstein axes.
+
+    Non-HexConv2d layers (1×1 convs, BN, FC) get standard Xavier/Kaiming init.
+    This is a structural prior about geometry, not game knowledge.
+    """
+    # Hex-7 neighbourhood in 3×3 kernel (row, col): center + 6 neighbours.
+    # Masked positions (0,0) and (2,2) are zeroed by HexConv2d.forward — skip them.
+    # Center = (1,1); 6 hex neighbours = all 3×3 cells except (0,0) and (2,2).
+    _HEX_NEIGHBORS = [(0, 1), (0, 2), (1, 0), (1, 2), (2, 0), (2, 1)]
+    center_val   =  1.0
+    neighbor_val = -1.0 / 6.0
+
+    for module in net.modules():
+        if isinstance(module, HexConv2d):
+            with torch.no_grad():
+                w = module.weight  # [out_ch, in_ch, 3, 3]
+                nn.init.zeros_(w)
+                # Set center weight
+                w[:, :, 1, 1] = center_val
+                # Set hex neighbour weights
+                for r, c in _HEX_NEIGHBORS:
+                    w[:, :, r, c] = neighbor_val
+                # Scale by Xavier fan factor so gradient magnitudes are reasonable
+                fan = w[0].numel()
+                scale = math.sqrt(2.0 / fan)
+                w.mul_(scale)
+
+
 class HexNet(nn.Module):
     """
     Shared trunk: IN_CH → hidden conv → n_blocks residual blocks → global pool
@@ -294,32 +368,55 @@ class HexNet(nn.Module):
         # KataGo global pool: gives each cell global board awareness (threat density etc.)
         self.global_pool = GlobalPoolBranch(hidden)
 
-        # Value head
+        # Value head — FC hidden scales with trunk channels for capacity balance
+        v_hidden = hidden * 2
         self.v_conv = nn.Sequential(
             nn.Conv2d(hidden, 1, 1, bias=False),
             nn.BatchNorm2d(1),
             nn.ReLU(),
         )
         self.v_fc = nn.Sequential(
-            nn.Linear(BOARD_SIZE * BOARD_SIZE, 64),
+            nn.Linear(BOARD_SIZE * BOARD_SIZE, v_hidden),
             nn.ReLU(),
-            nn.Linear(64, 1),
+            nn.Linear(v_hidden, 1),
             nn.Tanh(),
         )
 
         # Policy head — takes trunk features + 1-channel move plane
-        # 2c (parameter golf): 4-channel compressed map (was 2) + move plane → 32 hidden (was 64)
-        # More expressive trunk compression with fewer FC params overall
+        # 4-channel compressed map + move plane → FC hidden scales with trunk
+        p_hidden = hidden
         self.p_conv = nn.Sequential(
             nn.Conv2d(hidden, 4, 1, bias=False),
             nn.BatchNorm2d(4),
             nn.ReLU(),
         )
         self.p_fc = nn.Sequential(
-            nn.Linear(4 * BOARD_SIZE * BOARD_SIZE + BOARD_SIZE * BOARD_SIZE, 32),
+            nn.Linear(4 * BOARD_SIZE * BOARD_SIZE + BOARD_SIZE * BOARD_SIZE, p_hidden),
             nn.ReLU(),
-            nn.Linear(32, 1),
+            nn.Linear(p_hidden, 1),
         )
+
+        # Value uncertainty head — predicts σ² of value estimate (Softplus → σ² > 0).
+        # Trained with Gaussian NLL: loss = 0.5*(log(σ²) + (z-v)²/σ²).
+        # Diagnostic only: avg_sigma logged to metrics; not used in MCTS search.
+        self.value_var = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Flatten(),
+            nn.Linear(hidden, 1),
+            nn.Softplus(),
+        )
+
+        # Auxiliary heads — thin 1×1 convs off trunk features, no extra trunk compute.
+        # Bitter lesson: keep these light; they guide representation, not dominate loss.
+        # Ownership: which player owns each cell at game end (+1=P1, -1=P2, 0=empty)
+        self.aux_own = nn.Sequential(
+            nn.Conv2d(hidden, 1, 1, bias=False),
+            nn.Tanh(),
+        )
+        # Threat: does this cell lie on the winning 6-in-a-row (binary)
+        # No sigmoid here — sigmoid applied in threat() for inference;
+        # training uses binary_cross_entropy_with_logits (AMP-safe).
+        self.aux_threat = nn.Conv2d(hidden, 1, 1, bias=False)
 
     def trunk(self, x: torch.Tensor) -> torch.Tensor:
         return self.global_pool(self.blocks(self.stem(x)))
@@ -327,6 +424,10 @@ class HexNet(nn.Module):
     def value(self, features: torch.Tensor) -> torch.Tensor:
         v = self.v_conv(features).flatten(1)
         return self.v_fc(v).squeeze(-1)          # [B]
+
+    def variance(self, features: torch.Tensor) -> torch.Tensor:
+        """Predicted σ² of value estimate. [B] > 0 via Softplus."""
+        return self.value_var(features).squeeze(-1)  # [B]
 
     def policy_logit(self, features: torch.Tensor,
                      move_planes: torch.Tensor) -> torch.Tensor:
@@ -339,6 +440,18 @@ class HexNet(nn.Module):
         m = move_planes.flatten(1)               # [B, S*S]
         return self.p_fc(torch.cat([p, m], dim=1)).squeeze(-1)  # [B]
 
+    def ownership(self, features: torch.Tensor) -> torch.Tensor:
+        """features: [B, hidden, S, S] → [B, S, S] ∈ (-1, 1)"""
+        return self.aux_own(features).squeeze(1)
+
+    def threat(self, features: torch.Tensor) -> torch.Tensor:
+        """features: [B, hidden, S, S] → [B, S, S] ∈ (0, 1) (sigmoid applied for inference)"""
+        return torch.sigmoid(self.aux_threat(features).squeeze(1))
+
+    def threat_logits(self, features: torch.Tensor) -> torch.Tensor:
+        """Raw logits for use with binary_cross_entropy_with_logits (AMP-safe)."""
+        return self.aux_threat(features).squeeze(1)
+
     def forward(self, board_tensor: torch.Tensor,
                 move_planes: torch.Tensor | None = None):
         """
@@ -350,6 +463,63 @@ class HexNet(nn.Module):
         v = self.value(f)
         p = self.policy_logit(f, move_planes) if move_planes is not None else None
         return v, p
+
+
+# ── Auxiliary label generation ────────────────────────────────────────────────
+
+def make_aux_labels(game: HexGame, winner: int | None,
+                    oq: int, or_: int,
+                    size: int = BOARD_SIZE) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Generate ground-truth spatial labels for the auxiliary heads.
+
+    ownership [S, S] float32: +1 where P1 piece at game end, -1 where P2, 0 empty.
+    threat    [S, S] float32: 1.0 where a cell lies on the winning 6-in-a-row, 0 elsewhere.
+
+    Called once per episode with the final game state; the same label array is
+    broadcast back to every position in the episode (label is the game outcome,
+    not the state at that ply — consistent with AlphaZero value target convention).
+    """
+    half = size // 2
+    own_arr    = np.zeros((size, size), dtype=np.float32)
+    threat_arr = np.zeros((size, size), dtype=np.float32)
+
+    # Ownership: final board pieces
+    for (q, r), p in game.board.items():
+        qi = q - oq + half
+        ri = r - or_ + half
+        if 0 <= qi < size and 0 <= ri < size:
+            own_arr[ri, qi] = 1.0 if p == 1 else -1.0
+
+    # Threat: walk the 3 axes through every winning-player piece to find the
+    # winning line. Mark all 6 cells. If no winner, threat_arr stays zero.
+    if winner is not None:
+        from game import AXES, WIN_LENGTH
+        for (q, r), p in game.board.items():
+            if p != winner:
+                continue
+            for dq, dr in AXES:
+                # Count run length along this axis through (q, r)
+                line = [(q, r)]
+                for sign in (1, -1):
+                    step = 1
+                    while True:
+                        nq = q + sign * dq * step
+                        nr = r + sign * dr * step
+                        if game.board.get((nq, nr)) == winner:
+                            line.append((nq, nr))
+                            step += 1
+                        else:
+                            break
+                if len(line) >= WIN_LENGTH:
+                    for lq, lr in line[:WIN_LENGTH]:
+                        qi = lq - oq + half
+                        ri = lr - or_ + half
+                        if 0 <= qi < size and 0 <= ri < size:
+                            threat_arr[ri, qi] = 1.0
+                    break  # found the winning line for this piece
+
+    return own_arr, threat_arr
 
 
 # ── Inference helpers ─────────────────────────────────────────────────────────
@@ -436,6 +606,8 @@ if __name__ == "__main__":
                          sum(p.numel() for p in net.v_fc.parameters()),
         "policy_head":   sum(p.numel() for p in net.p_conv.parameters()) +
                          sum(p.numel() for p in net.p_fc.parameters()),
+        "aux_heads":     sum(p.numel() for p in net.aux_own.parameters()) +
+                         sum(p.numel() for p in net.aux_threat.parameters()),
     }
     print(f"\n  Param breakdown  (total {total:,}):")
     for name, count in sections.items():
