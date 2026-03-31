@@ -4,27 +4,30 @@
 
 ```
 Input [11, 18, 18]
-  → Conv2d(11→32, 3×3) + BN + ReLU              [stem: standard conv, not HexConv2d]
-  → GlobalPoolBranch(32ch)                        [KataGo global context]
-  → 2× ResBlock(32ch, HexConv2d)                 [trunk: Z[ω]-faithful kernels]
-  ├→ Conv2d(32→1, 1×1) + BN + ReLU → FC → Tanh  [value head → scalar ∈ [-1,1]]
-  └→ HexConv2d(32→4, 1×1) + BN + ReLU →
-       cat(move_plane) → Linear(5·S², 32) → out  [policy → scalar logit per move]
+  → HexConv2d(11→64, 3×3) + BN + ReLU           [stem: hex-masked conv]
+  → 4× ResBlock(64ch, HexConv2d)                 [trunk: Z[ω]-faithful kernels]
+  → GlobalPoolBranch(64ch)                        [KataGo global context]
+  ├→ Conv2d(64→1, 1×1) + BN + ReLU → FC → Tanh  [value head → scalar ∈ [-1,1]]
+  ├→ Softplus variance head                       [value uncertainty → σ²]
+  ├→ Conv2d(64→1, 1×1) + Tanh                    [ownership aux → [S,S]]
+  ├→ Conv2d(64→1, 1×1)                           [threat aux → [S,S]]
+  └→ Conv2d(64→4, 1×1) + BN + ReLU →
+       cat(move_plane) → Linear(5·S², 64) → out  [policy → scalar logit per move]
 ```
 
 | Param | Value | Rationale |
 |-------|-------|-----------|
-| Board window | 18×18 | Centered on centroid; covers >95% of practical game extents |
-| Hidden channels | 32 | RTX 2060 throughput-optimised; ×4 faster than 64ch |
-| Residual blocks | 2 | Sufficient for early-phase strategy; ~5ms GPU call |
+| Board window | 18×18 | Centered on recent-move centroid; covers >95% of game extents |
+| Hidden channels | 64 | Configurable via CFG["TRUNK_CHANNELS"] |
+| Residual blocks | 4 | Configurable via CFG["TRUNK_BLOCKS"] |
 | Precision | FP16 AMP | `torch.amp.autocast` doubles memory bandwidth |
-| Total params | ~121K | Parameter-golfed policy head |
+| Weight init | Hex-Laplacian CA | `init_weights_ca()` — Z[ω]-aligned diffusion prior |
 
 ---
 
 ## Input Encoding (`encode_board`)
 
-Returns `float32 [11, 18, 18]` centered on the centroid of all placed pieces.
+Returns `float32 [11, 18, 18]` centered on the centroid of the last N_RECENT (20) moves.
 
 | Channel(s) | Contents |
 |-----------|----------|

@@ -16,7 +16,7 @@ Each component has its own detailed doc.
 | Autotune | [AUTOTUNE.md](AUTOTUNE.md) | Hyperparameter search, tune.py, config.py, skill |
 | Roadmap | [ROADMAP.md](ROADMAP.md) | Checkbox status for all phases |
 | Assessment | [ASSESSMENT.md](ASSESSMENT.md) | Honest code review findings and priority fix list |
-| Research | [research/](research/) | Literature synthesis across 5 research docs |
+| Research | [research/](research/) | Literature synthesis across 7 research docs |
 
 ---
 
@@ -82,7 +82,7 @@ without any explicit encoding of that structure.
 hexgo/
   game.py       Engine — 1-2-2 turn logic, incremental candidates, make/unmake
   mcts.py       MCTS — player-aware backprop, rollout + net modes
-  net.py        HexNet — HexConv2d/D6/ResNet 18x18/32ch/11ch/2blk + FP16 AMP
+  net.py        HexNet — HexConv2d/D6/ResNet 18x18/64ch/11ch/4blk + FP16 AMP
   inference.py  InferenceServer — dynamic batching + transposition cache
   train.py      Training loop — D6 aug, Eisenstein curriculum, heatmap, ELO
   config.py     Hyperparameters — all tunable params; edited by autotune agent

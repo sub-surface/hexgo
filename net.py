@@ -1,16 +1,16 @@
 """
-HexNet — small ResNet policy+value network for hexagonal 6-in-a-row.
+HexNet — ResNet policy+value network for hexagonal 6-in-a-row.
 
-Architecture rationale (see docs/DESIGN.md):
-  - Input: 11 × 18 × 18 axial grid centered on board centroid (3 state + 8 history)
-  - 2 residual blocks, 32 channels — ~122K params
+Architecture (configured via config.py CFG):
+  - Input: 11 × 18 × 18 axial grid centered on recent-move centroid (3 state + 8 history)
+  - Trunk: CFG["TRUNK_BLOCKS"] residual blocks, CFG["TRUNK_CHANNELS"] channels
+    Default: 4 blocks × 64 channels. KataGo-style global pool after trunk.
   - Value head: board → scalar win probability ∈ [-1, 1]
-  - Policy head: (board, move_plane) → scalar logit
-    Move plane is a 1-hot 18×18 map of the candidate move.
-    This avoids a fixed output size and works for any board extent.
+  - Policy head: (board, move_plane) → scalar logit per candidate move
+  - Value uncertainty head: board → σ² (Gaussian NLL, diagnostic only)
   - Ownership head: board → [S, S] ∈ (-1, 1)  (+1=P1, -1=P2, 0=empty)
   - Threat head: board → [S, S] ∈ (0, 1)  (1=cell on winning 6-in-a-row)
-  Both aux heads are thin 1×1 convs off the existing trunk — zero extra trunk compute.
+  Aux heads are thin 1×1 convs off trunk features — zero extra trunk compute.
 
 Device: CUDA if available, else CPU.
 """
