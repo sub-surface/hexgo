@@ -122,7 +122,7 @@ REPLAY_DIR = Path("replays")
 REPLAY_DIR.mkdir(exist_ok=True)
 
 BUFFER_CAP    = 50_000
-EVAL_GAMES    = 10
+EVAL_GAMES    = 20
 NUM_WORKERS   = 8       # 1a: increased from 4 — more concurrent games fill the batch
 INF_BATCH     = 8       # 1a: inference server max batch size (match NUM_WORKERS)
 INF_TIMEOUT   = 30      # 1a: ms to wait for a full batch (was 5ms — too short for MCTS think time)
@@ -513,6 +513,11 @@ def compute_move_acc(net: HexNet, buffer: deque, n_samples: int = 40) -> float:
     """
     Top-1 policy agreement rate between the net and EisensteinGreedyAgent (defensive).
 
+    NOTE: This metric is an early-training sanity check only. Once the network
+    surpasses the greedy agent (~gen 20+), decreasing agreement is expected and
+    healthy — it means the network learned non-trivial strategy. Do not use as
+    a quality signal in later training.
+
     For each sampled position we encode the board, run the net's policy head,
     pick argmax move among legal ZOI moves, and check whether it matches the
     greedy agent's choice stored at collection time.  Returns fraction in [0,1].
@@ -662,6 +667,7 @@ def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20, tune_mode:
         log.info("Initialized HexConv2d kernels with hex-Laplacian CA priors.")
 
     optimizer = optim.Adam(net.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(n_gens, 1), eta_min=LR * 0.01)
     scaler = torch.amp.GradScaler(enabled="cuda" in str(DEVICE))
     elo = ELO()
     buffer: deque = deque(maxlen=BUFFER_CAP)
@@ -760,9 +766,15 @@ def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20, tune_mode:
                     if batches_since_sync >= WEIGHT_SYNC_BATCHES:
                         sd = (net._orig_mod.state_dict()
                               if hasattr(net, "_orig_mod") else net.state_dict())
-                        # Load into _orig_mod if server.net is compiled
+                        # Synchronize CUDA before and after load_state_dict to prevent
+                        # racing with inference server GPU forward passes (CUDA kernels
+                        # release the GIL, so load_state_dict mid-forward can corrupt).
+                        if torch.cuda.is_available():
+                            torch.cuda.synchronize()
                         target = server.net._orig_mod if hasattr(server.net, "_orig_mod") else server.net
                         target.load_state_dict(sd)
+                        if torch.cuda.is_available():
+                            torch.cuda.synchronize()
                         batches_since_sync = 0
 
         perf.stop("self_play")
@@ -808,7 +820,7 @@ def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20, tune_mode:
         perf.start("eval")
         net_agent = NetAgent(net, sims=max(25, sims // 2), name=f"net_gen{gen:04d}")
         eis_agent = EisensteinGreedyAgent(name="eisenstein_def", defensive=True)
-        eis_n     = EVAL_GAMES // 2
+        eis_n     = EVAL_GAMES
         eis_match = run_match(net_agent, eis_agent, n_games=eis_n, elo=elo, verbose=False)
         eis_wins  = eis_match.get(f"wins_{net_agent.name}", 0)
         move_acc_eval = compute_move_acc(net, buffer)
@@ -858,6 +870,7 @@ def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20, tune_mode:
             "gen_time_s":   round(time.perf_counter() - t_gen, 1),
             "buffer_size":  len(buffer),
             "positions":    total_positions,
+            "lr":           optimizer.param_groups[0]["lr"],
         }
         with open("metrics.jsonl", "a", encoding="utf-8") as _mf:
             _mf.write(json.dumps(_metrics_line) + "\n")
@@ -867,7 +880,9 @@ def train(n_gens: int = 50, sims: int = 100, games_per_gen: int = 20, tune_mode:
         log.info("  Perf: %s", perf.summary(t_total))
         for w in perf.warnings(t_total, server.avg_batch_size, deduped, total_positions):
             log.warning("  BOTTLENECK: %s", w)
-        log.info("  Generation %d done in %.1fs", gen, t_total)
+        scheduler.step()
+        log.info("  Generation %d done in %.1fs  lr=%.2e", gen, t_total,
+                 optimizer.param_groups[0]["lr"])
 
     log.info("Training complete.")
 
