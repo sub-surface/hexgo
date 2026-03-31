@@ -177,38 +177,27 @@ def mcts_policy(game: HexGame, server: InferenceServer, sims: int,
     rather than building a new tree from scratch. Pass the returned new_root as
     prev_root on the next call to recycle ~N/branching_factor simulations for free.
     """
-    # 1c: Tree reuse — use existing subtree if available
-    # Try to reuse previous subtree; fall back to fresh root if stale or empty
-    reused = False
-    if prev_root is not None and prev_root.children:
-        prev_root.parent = None
-        valid_children = [c for c in prev_root.children if c.move not in game.board]
-        if valid_children:
-            root = prev_root
-            root.children = valid_children
-            moves = [c.move for c in root.children]
-            _da, _de = CFG["DIRICHLET_ALPHA"], CFG["DIRICHLET_EPS"]
-            noise = np.random.dirichlet([_da] * len(moves))
-            for c, n in zip(root.children, noise):
-                c.prior = (1 - _de) * c.prior + _de * float(n)
-            reused = True
+    # Tree reuse disabled: the previous implementation retained stale siblings
+    # with obsolete visit counts from a different game state, corrupting the search.
+    # Correct reuse requires descending through all intermediate moves (opponent turns,
+    # second placements under 1-2-2) to find the correct subtree — not just filtering
+    # children by board occupancy.
+    # TODO: implement correct tree descent through intermediate moves.
+    root = Node(player=game.current_player)
+    value, policy = server.evaluate(game)
+    moves = game.zoi_moves(ZOI_MARGIN, ZOI_LOOKBACK)
+    if not moves:
+        return None, None, [], None
 
-    if not reused:
-        root = Node(player=game.current_player)
-        value, policy = server.evaluate(game)
-        moves = game.zoi_moves(ZOI_MARGIN, ZOI_LOOKBACK)  # ZOI pruning: ~80-90% branch reduction
-        if not moves:
-            return None, None, [], None
+    logits = np.array([policy.get(m, 0.0) for m in moves], dtype=np.float32)
+    logits -= logits.max()
+    priors = np.exp(logits); priors /= priors.sum()
 
-        logits = np.array([policy.get(m, 0.0) for m in moves], dtype=np.float32)
-        logits -= logits.max()
-        priors = np.exp(logits); priors /= priors.sum()
-
-        _da, _de = CFG["DIRICHLET_ALPHA"], CFG["DIRICHLET_EPS"]
-        noise = np.random.dirichlet([_da] * len(moves))
-        priors = (1 - _de) * priors + _de * noise
-        root.children = [Node(move=m, parent=root, prior=float(p), player=game.current_player)
-                         for m, p in zip(moves, priors)]
+    _da, _de = CFG["DIRICHLET_ALPHA"], CFG["DIRICHLET_EPS"]
+    noise = np.random.dirichlet([_da] * len(moves))
+    priors = (1 - _de) * priors + _de * noise
+    root.children = [Node(move=m, parent=root, prior=float(p), player=game.current_player)
+                     for m, p in zip(moves, priors)]
 
     for _ in range(sims):
         node = root
@@ -406,6 +395,8 @@ def train_batch(net: HexNet, optimizer, scaler, buffer: deque) -> dict:
 
         # Policy loss: cross-entropy against visit distribution for ALL legal moves
         loss_p = torch.tensor(0.0, device=DEVICE)
+        loss_ent = torch.tensor(0.0, device=DEVICE)  # differentiable entropy accumulator
+        ent_reg = CFG.get("ENTROPY_REG", 0.0)
         n_p = 0
         for i, item in enumerate(batch):
             oq, or_ = item["oq"], item["or_"]
@@ -441,38 +432,33 @@ def train_batch(net: HexNet, optimizer, scaler, buffer: deque) -> dict:
             loss_p += -(probs * log_preds).sum()
             n_p += 1
 
-            with torch.no_grad():
-                preds = F.softmax(logits, dim=0)
-                item["entropy"] = -(preds * log_preds).sum().item()
+            preds_live = F.softmax(logits, dim=0)
+            ent_i = -(preds_live * log_preds).sum()
+            loss_ent = loss_ent + ent_i
+            item["entropy"] = ent_i.detach().item()  # for logging only
 
         if n_p > 0:
             loss_p /= n_p
 
         # Entropy regularization — reward high-entropy policies to prevent premature collapse.
-        # H(π) = -∑ p log p is already computed per item; average over batch and subtract.
-        ent_reg = CFG.get("ENTROPY_REG", 0.0)
+        # loss_ent is a differentiable tensor (gradients flow to policy head).
         if ent_reg > 0 and n_p > 0:
-            avg_batch_ent = sum(b.get("entropy", 0.0) for b in batch) / n_p
-            loss_p = loss_p - ent_reg * avg_batch_ent
+            loss_p = loss_p - ent_reg * (loss_ent / n_p)
 
         # Auxiliary losses — ownership (MSE) + threat (BCE), if labels present
         loss_aux = torch.tensor(0.0, device=DEVICE)
         aux_w_own    = CFG["AUX_LOSS_OWN"]
         aux_w_threat = CFG["AUX_LOSS_THREAT"]
         if aux_w_own > 0 or aux_w_threat > 0:
-            has_aux = [b for b in batch if "own_label" in b]
-            if has_aux:
-                own_np    = np.stack([b["own_label"]    for b in has_aux])
-                threat_np = np.stack([b["threat_label"] for b in has_aux])
-                boards_aux_np = np.stack([b["board"] for b in has_aux])
-                boards_aux = (torch.from_numpy(boards_aux_np).pin_memory()
-                              .to(DEVICE, non_blocking=True)
-                              if _CUDA else torch.tensor(boards_aux_np, device=DEVICE))
+            aux_indices = [i for i, b in enumerate(batch) if "own_label" in b]
+            if aux_indices:
+                own_np    = np.stack([batch[i]["own_label"]    for i in aux_indices])
+                threat_np = np.stack([batch[i]["threat_label"] for i in aux_indices])
                 own_t    = (torch.from_numpy(own_np).pin_memory().to(DEVICE, non_blocking=True)
                             if _CUDA else torch.tensor(own_np, device=DEVICE))
                 threat_t = (torch.from_numpy(threat_np).pin_memory().to(DEVICE, non_blocking=True)
                             if _CUDA else torch.tensor(threat_np, device=DEVICE))
-                f_aux = net.trunk(boards_aux)
+                f_aux = f[aux_indices]  # reuse trunk features, no recomputation
                 if aux_w_own > 0:
                     own_pred = net.ownership(f_aux)           # [N, S, S]
                     loss_aux = loss_aux + aux_w_own * F.mse_loss(own_pred, own_t)
