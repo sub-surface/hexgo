@@ -360,7 +360,7 @@ class HexNet(nn.Module):
 
         # Trunk
         self.stem = nn.Sequential(
-            nn.Conv2d(IN_CH, hidden, 3, padding=1, bias=False),
+            HexConv2d(IN_CH, hidden, bias=False),
             nn.BatchNorm2d(hidden),
             nn.ReLU(),
         )

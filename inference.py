@@ -83,73 +83,7 @@ class InferenceServer:
 
     def start(self):
         self._running = True
-        # 1b: compile net for reduced kernel-launch overhead on CUDA.
-        # dynamic=True handles variable batch sizes without recompilation.
-        # Falls back silently if torch.compile is unavailable (PyTorch < 2.0).
-        if torch.cuda.is_available() and hasattr(torch, "compile"):
-            try:
-                self.net = torch.compile(self.net, dynamic=True)
-            except Exception:
-                pass  # non-fatal: older PyTorch or unsupported configuration
-        # 3c: CUDA Graphs — capture a static forward pass for the full batch_size.
-        # Variable-size batches are handled by padding to batch_size and slicing output.
-        self._cuda_graph = None
-        self._graph_boards = None
-        self._graph_moves  = None
-        self._graph_feat   = None
-        self._graph_val    = None
-        self._graph_pol    = None
-        if torch.cuda.is_available():
-            self._try_capture_cuda_graph()
         self._thread.start()
-
-    def _try_capture_cuda_graph(self):
-        """Capture a CUDA graph for the full-batch inference path.
-
-        CUDA Graphs require all outputs to be written in-place into pre-allocated
-        static tensors. The captured kernels write into the SAME tensor objects
-        every replay. We use copy_() inside the graph context for this.
-        """
-        try:
-            S = BOARD_SIZE
-            from net import IN_CH
-            B = self.batch_size
-            # Static input/output tensors — must be allocated BEFORE capture
-            self._graph_boards = torch.zeros(B, IN_CH, S, S, device="cuda",
-                                             dtype=torch.float16)
-            self._graph_moves  = torch.zeros(B, 1, S, S, device="cuda",
-                                             dtype=torch.float16)
-            # Warm-up passes (required to initialise cuBLAS etc. before capture)
-            self.net.eval()
-            with torch.no_grad():
-                with torch.amp.autocast(device_type="cuda"):
-                    for _ in range(3):
-                        _f = self.net.trunk(self._graph_boards)
-                        self.net.value(_f[[0]])
-                        self.net.policy_logit(_f, self._graph_moves)
-            torch.cuda.synchronize()
-            # Pre-allocate output buffers (static — graph writes into these)
-            with torch.no_grad():
-                with torch.amp.autocast(device_type="cuda"):
-                    _f0 = self.net.trunk(self._graph_boards)
-            self._graph_feat = _f0.clone()      # static feature buffer [B, C, H, W]
-            self._graph_val  = torch.zeros(B, device="cuda")   # value output [B]
-            self._graph_pol  = torch.zeros(B, device="cuda")   # policy output [B]
-            # Capture — all ops must write in-place into the pre-allocated buffers
-            g = torch.cuda.CUDAGraph()
-            with torch.cuda.graph(g):
-                with torch.amp.autocast(device_type="cuda"):
-                    self._graph_feat.copy_(self.net.trunk(self._graph_boards))
-                    self._graph_val.copy_(self.net.value(self._graph_feat))
-                    self._graph_pol.copy_(
-                        self.net.policy_logit(self._graph_feat, self._graph_moves))
-            self._cuda_graph = g
-        except Exception as e:
-            # Non-fatal: fall back to eager forward pass
-            import logging
-            logging.getLogger(__name__).warning(
-                "CUDA Graph capture failed (%s) — using eager path", e)
-            self._cuda_graph = None
 
     def stop(self):
         self._running = False
@@ -265,41 +199,24 @@ class InferenceServer:
         moves_np  = np.stack(move_planes)
 
         self.net.eval()
-        # 3c: CUDA Graphs path — pad to static batch_size, replay graph, slice output
-        if (self._cuda_graph is not None
-                and N <= self.batch_size
-                and self._graph_boards is not None):
-            self._graph_boards.zero_()
-            self._graph_moves.zero_()
-            t_b = torch.tensor(boards_np, dtype=torch.float16)
-            t_m = torch.tensor(moves_np,  dtype=torch.float16)
-            self._graph_boards[:N].copy_(t_b)
-            self._graph_moves[:N].copy_(t_m)
-            self._cuda_graph.replay()
-            torch.cuda.synchronize()
-            # Slice to actual N rows
-            val_idxs = [s for s, e, r, m, k in request_slices]
-            values  = self._graph_val[val_idxs].detach().float().cpu().numpy()
-            logits  = self._graph_pol[:N].detach().float().cpu().numpy()
+        # pin_memory for async host→GPU transfer on CUDA
+        if _CUDA:
+            boards_t = (torch.from_numpy(boards_np).pin_memory()
+                        .to(DEVICE, non_blocking=True))
+            moves_t  = (torch.from_numpy(moves_np).pin_memory()
+                        .to(DEVICE, non_blocking=True))
         else:
-            # pin_memory for async host→GPU transfer on CUDA
-            if _CUDA:
-                boards_t = (torch.from_numpy(boards_np).pin_memory()
-                            .to(DEVICE, non_blocking=True))
-                moves_t  = (torch.from_numpy(moves_np).pin_memory()
-                            .to(DEVICE, non_blocking=True))
-            else:
-                boards_t = torch.tensor(boards_np, device=DEVICE)
-                moves_t  = torch.tensor(moves_np,  device=DEVICE)
-            dev_type = "cuda" if _CUDA else "cpu"
-            with torch.amp.autocast(device_type=dev_type):
-                with torch.no_grad():
-                    features = self.net.trunk(boards_t)
-                    val_idxs = [s for s, e, r, m, k in request_slices]
-                    val_t = self.net.value(features[val_idxs])
-                    pol_t = self.net.policy_logit(features, moves_t)
-            values  = val_t.float().cpu().numpy()
-            logits  = pol_t.float().cpu().numpy()
+            boards_t = torch.tensor(boards_np, device=DEVICE)
+            moves_t  = torch.tensor(moves_np,  device=DEVICE)
+        dev_type = "cuda" if _CUDA else "cpu"
+        with torch.amp.autocast(device_type=dev_type):
+            with torch.no_grad():
+                features = self.net.trunk(boards_t)
+                val_idxs = [s for s, e, r, m, k in request_slices]
+                val_t = self.net.value(features[val_idxs])
+                pol_t = self.net.policy_logit(features, moves_t)
+        values  = val_t.float().cpu().numpy()
+        logits  = pol_t.float().cpu().numpy()
 
         for i, (start, end, resp, moves, key) in enumerate(request_slices):
             policy = {m: float(logits[start + j]) for j, m in enumerate(moves)}
