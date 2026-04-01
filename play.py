@@ -52,7 +52,7 @@ class HexPlayGUI:
         self.undo_stack = []  # number of moves per "turn" for undo
 
         # Pan/zoom state
-        self.hex_size = 28
+        self.hex_size = 18
         self.pan_x = 0
         self.pan_y = 0
         self._drag_start = None
@@ -146,19 +146,16 @@ class HexPlayGUI:
         if w < 10 or h < 10:
             return
 
-        # Collect all cells to draw: board pieces + their neighbors
+        # Collect all cells to draw: all legal moves + board pieces
+        from game import PLACEMENT_RADIUS, _cells_within_radius
         cells = set()
         if not self.game.board:
             cells.add((0, 0))
         else:
-            for pos in self.game.board:
-                cells.add(pos)
-            for q, r in list(cells):
-                for dq, dr in [(1,0),(0,1),(1,-1),(-1,0),(0,-1),(-1,1)]:
-                    cells.add((q+dq, r+dr))
-        # Add candidates
-        for pos in self.game.candidates:
-            cells.add(pos)
+            # Show all cells within placement radius of any piece
+            for pq, pr in self.game.board:
+                for cq, cr in _cells_within_radius(pq, pr, PLACEMENT_RADIUS):
+                    cells.add((cq, cr))
 
         legal = set(self.game.legal_moves()) if self.game.winner is None else set()
         is_human_turn = (self.game.current_player == self.human_player
