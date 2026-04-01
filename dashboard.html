@@ -674,21 +674,62 @@ async function loadReplayList() {
     const list = await api('/api/replays');
     const el = document.getElementById('replay-list');
     el.innerHTML = '';
+    // Group by generation
+    const genMap = {};
     list.forEach(name => {
-      const btn = document.createElement('div');
-      const label = name.replace('game_','').replace('.json','');
-      btn.textContent = label;
-      btn.title = name;
-      btn.style.cssText = 'padding:4px 7px;cursor:pointer;border-radius:2px;color:var(--dim2);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:background .1s;';
-      btn.onmouseenter = () => btn.style.background = 'var(--border)';
-      btn.onmouseleave = () => btn.style.background = '';
-      btn.onclick = () => {
-        el.querySelectorAll('div').forEach(d => d.style.color = 'var(--dim2)');
-        btn.style.color = 'var(--text)';
-        loadReplay(name);
-      };
-      el.appendChild(btn);
+      const m = name.match(/gen(\d+)/);
+      const gen = m ? parseInt(m[1]) : 0;
+      if (!genMap[gen]) genMap[gen] = [];
+      genMap[gen].push(name);
     });
+    // Sort generations descending (newest first)
+    const gens = Object.keys(genMap).map(Number).sort((a, b) => b - a);
+    gens.forEach(gen => {
+      // Folder header
+      const folder = document.createElement('div');
+      folder.style.cssText = 'margin-top:6px;';
+      const header = document.createElement('div');
+      header.style.cssText = 'padding:4px 7px;cursor:pointer;color:var(--dim);font-size:10px;letter-spacing:1px;display:flex;align-items:center;gap:4px;user-select:none;';
+      header.innerHTML = `<span class="folder-arrow" style="font-size:8px;transition:transform .1s;">▶</span> GEN ${String(gen).padStart(3,'0')} <span style="color:var(--border2);margin-left:auto;">${genMap[gen].length}</span>`;
+      const items = document.createElement('div');
+      items.style.cssText = 'display:none;padding-left:12px;';
+      header.onclick = () => {
+        const open = items.style.display !== 'none';
+        items.style.display = open ? 'none' : 'block';
+        header.querySelector('.folder-arrow').style.transform = open ? '' : 'rotate(90deg)';
+      };
+      genMap[gen].forEach(name => {
+        const btn = document.createElement('div');
+        let label = name.replace(/.*\//, '').replace('game_','').replace('.json','').replace(/gen\d+_/, '').replace(/_\d{8}_\d{6}$/, '');
+        // Color-code by type
+        const isDecisive = name.startsWith('decisive/');
+        const isW1 = name.includes('_w1_');
+        const isW2 = name.includes('_w2_');
+        if (isW1) label = '● ' + label;
+        else if (isW2) label = '● ' + label;
+        else label = '○ ' + label;
+        btn.textContent = label;
+        btn.title = name;
+        btn.style.cssText = `padding:3px 6px;cursor:pointer;border-radius:2px;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:background .1s;color:${isW1 ? '#e06060' : isW2 ? '#6090e0' : 'var(--dim2)'};`;
+        btn.onmouseenter = () => btn.style.background = 'var(--border)';
+        btn.onmouseleave = () => btn.style.background = '';
+        btn.onclick = () => {
+          el.querySelectorAll('.replay-item-active').forEach(d => { d.classList.remove('replay-item-active'); d.style.background = ''; });
+          btn.style.background = 'var(--border)';
+          btn.classList.add('replay-item-active');
+          loadReplay(name);
+        };
+        items.appendChild(btn);
+      });
+      folder.appendChild(header);
+      folder.appendChild(items);
+      el.appendChild(folder);
+    });
+    // Auto-expand first (newest) generation
+    if (gens.length > 0) {
+      const firstFolder = el.querySelector('div');
+      if (firstFolder) firstFolder.querySelector('div')?.click();
+    }
   } catch (_) {}
 }
 
