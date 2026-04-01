@@ -128,10 +128,8 @@ def batched_self_play(net, n_games, sims, max_moves, top_k, device):
     move_counts = [0] * n_games
     temp_horizon = CFG.get("TEMP_HORIZON", 40)
     dir_alpha = CFG.get("DIRICHLET_ALPHA", 0.09)
-    # Evaluation cache: (board_state_key) -> (value, logit_map, origin)
-    # Avoids redundant encode_board + GPU calls for transpositions
-    eval_cache = {}
     cache_hits = 0
+    cache_size = 0
     dir_eps = CFG.get("DIRICHLET_EPS", 0.25)
     zoi_margin = CFG.get("ZOI_MARGIN", 6)
     zoi_lookback = CFG.get("ZOI_LOOKBACK", 16)
@@ -212,85 +210,46 @@ def batched_self_play(net, n_games, sims, max_moves, top_k, device):
             needs_eval = [(i, node, depth) for i, node, depth, in leaves
                           if games[i].winner is None and not node.children]
 
-            # Batch evaluate all non-terminal unexpanded leaves (with cache)
+            # Batch evaluate all non-terminal unexpanded leaves
             eval_values = {}
             if needs_eval:
-                # Check cache first, split into hits and misses
-                cache_miss = []
-                for i, node, depth in needs_eval:
-                    cache_key = (frozenset(games[i].board.items()),
-                                 games[i].current_player, games[i].placements_in_turn)
-                    if cache_key in eval_cache:
-                        # Cache hit — reuse stored value and expand from cached logits
-                        cache_hits += 1
-                        c_val, c_logits, c_origin = eval_cache[cache_key]
-                        oq, or_ = c_origin
-                        legal = games[i].legal_moves()
-                        ml = []
-                        for m in legal:
-                            g = move_to_grid(m[0], m[1], oq, or_)
-                            if g:
-                                ml.append((m, c_logits[g[0], g[1]]))
-                        if ml:
-                            ml.sort(key=lambda x: x[1], reverse=True)
-                            ml = ml[:top_k]
-                            moves_e = [m for m, _ in ml]
-                            logits_e = np.array([l for _, l in ml], dtype=np.float32)
-                            logits_e -= logits_e.max()
-                            priors_e = np.exp(logits_e); priors_e /= priors_e.sum()
-                            node.children = [
-                                Node(move=m, parent=node, prior=float(p),
-                                     player=games[i].current_player)
-                                for m, p in zip(moves_e, priors_e)
-                            ]
-                        v = c_val
-                        if node.player != games[i].current_player:
-                            v = -v
-                        eval_values[id(node)] = v
-                    else:
-                        cache_miss.append((i, node, depth, cache_key))
+                eval_data = [encode_board(games[i]) for i, _, _ in needs_eval]
+                eval_np = np.stack([d[0] for d in eval_data])
+                eval_origins = [d[1] for d in eval_data]
 
-                # GPU batch for cache misses only
-                if cache_miss:
-                    eval_data = [encode_board(games[i]) for i, _, _, _ in cache_miss]
-                    eval_np = np.stack([d[0] for d in eval_data])
-                    eval_origins = [d[1] for d in eval_data]
+                eval_t = torch.tensor(eval_np, device=device)
+                with torch.amp.autocast(device_type="cuda" if _CUDA else "cpu"):
+                    ef = net.trunk(eval_t)
+                    ep = net.policy_logits(ef).float().cpu().numpy()
+                ev = net.value(ef.float()).cpu().numpy().clip(-1.0, 1.0)
 
-                    eval_t = torch.tensor(eval_np, device=device)
-                    with torch.amp.autocast(device_type="cuda" if _CUDA else "cpu"):
-                        ef = net.trunk(eval_t)
-                        ep = net.policy_logits(ef).float().cpu().numpy()
-                    ev = net.value(ef.float()).cpu().numpy().clip(-1.0, 1.0)
+                for j, (i, node, depth) in enumerate(needs_eval):
+                    oq, or_ = eval_origins[j]
+                    legal = games[i].legal_moves()
 
-                    for j, (i, node, depth, cache_key) in enumerate(cache_miss):
-                        oq, or_ = eval_origins[j]
-                        # Store in cache
-                        eval_cache[cache_key] = (float(ev[j]), ep[j], (oq, or_))
+                    ml = []
+                    for m in legal:
+                        g = move_to_grid(m[0], m[1], oq, or_)
+                        if g:
+                            ml.append((m, ep[j, g[0], g[1]]))
 
-                        legal = games[i].legal_moves()
-                        ml = []
-                        for m in legal:
-                            g = move_to_grid(m[0], m[1], oq, or_)
-                            if g:
-                                ml.append((m, ep[j, g[0], g[1]]))
+                    if ml:
+                        ml.sort(key=lambda x: x[1], reverse=True)
+                        ml = ml[:top_k]
+                        moves_e = [m for m, _ in ml]
+                        logits_e = np.array([l for _, l in ml], dtype=np.float32)
+                        logits_e -= logits_e.max()
+                        priors_e = np.exp(logits_e); priors_e /= priors_e.sum()
+                        node.children = [
+                            Node(move=m, parent=node, prior=float(p),
+                                 player=games[i].current_player)
+                            for m, p in zip(moves_e, priors_e)
+                        ]
 
-                        if ml:
-                            ml.sort(key=lambda x: x[1], reverse=True)
-                            ml = ml[:top_k]
-                            moves_e = [m for m, _ in ml]
-                            logits_e = np.array([l for _, l in ml], dtype=np.float32)
-                            logits_e -= logits_e.max()
-                            priors_e = np.exp(logits_e); priors_e /= priors_e.sum()
-                            node.children = [
-                                Node(move=m, parent=node, prior=float(p),
-                                     player=games[i].current_player)
-                                for m, p in zip(moves_e, priors_e)
-                            ]
-
-                        v = float(ev[j])
-                        if node.player != games[i].current_player:
-                            v = -v
-                        eval_values[id(node)] = v
+                    v = float(ev[j])
+                    if node.player != games[i].current_player:
+                        v = -v
+                    eval_values[id(node)] = v
 
             # Backprop + unmake for all games
             for i, node, depth in leaves:
@@ -392,7 +351,7 @@ def batched_self_play(net, n_games, sims, max_moves, top_k, device):
 
         results.append((positions, winner, list(games[i].move_history)))
 
-    return results, cache_hits, len(eval_cache)
+    return results
 
 
 # -- Training step (fully vectorized) -----------------------------------------
@@ -669,7 +628,7 @@ def train(n_gens=50, sims=100, games_per_gen=64):
 
         # --- Batched self-play ---
         t_sp = time.perf_counter()
-        results, cache_hits, cache_size = batched_self_play(net, games_per_gen, cur_sims, cur_max_moves,
+        results = batched_self_play(net, games_per_gen, cur_sims, cur_max_moves,
                                      TOP_K, DEVICE)
         sp_time = time.perf_counter() - t_sp
 
@@ -687,12 +646,11 @@ def train(n_gens=50, sims=100, games_per_gen=64):
         avg_moves = total_moves / max(len(results), 1)
         games_per_s = games_per_gen / max(sp_time, 0.01)
         log.info("  Self-play: %d games in %.1fs  (%.1f games/s)  avg_moves=%.0f  "
-                 "sims=%d  max_moves=%d  X=%d O=%d draw=%d  positions=%d  buffer=%d  "
-                 "cache_hits=%d  cache_size=%d",
+                 "sims=%d  max_moves=%d  X=%d O=%d draw=%d  positions=%d  buffer=%d",
                  games_per_gen, sp_time, games_per_s,
                  avg_moves, cur_sims, cur_max_moves,
                  game_wins[1], game_wins[2], game_wins[None],
-                 total_positions, len(buffer), cache_hits, cache_size)
+                 total_positions, len(buffer))
 
         # Save decisive games for corpus
         n_decisive = save_decisive_games(results, gen)
