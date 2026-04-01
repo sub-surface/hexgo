@@ -545,26 +545,30 @@ def load_buffer(buffer):
 # -- Main training loop --------------------------------------------------------
 
 LOCK_FILE = Path("train.lock")
+_lock_fh = None  # held open for lifetime of process
 
 def _acquire_lock():
-    """Prevent multiple training processes. Exit if another is running."""
-    if LOCK_FILE.exists():
-        try:
-            old_pid = int(LOCK_FILE.read_text().strip())
-            # Check if that PID is still alive
-            import ctypes
-            kernel32 = ctypes.windll.kernel32
-            handle = kernel32.OpenProcess(0x1000, False, old_pid)  # PROCESS_QUERY_LIMITED_INFORMATION
-            if handle:
-                kernel32.CloseHandle(handle)
-                log.error("Another training process is running (PID %d). Exiting.", old_pid)
-                sys.exit(1)
-        except (ValueError, OSError, AttributeError):
-            pass  # stale lock or not on Windows — proceed
-    LOCK_FILE.write_text(str(os.getpid()))
+    """Prevent multiple training processes using OS-level file lock."""
+    global _lock_fh
+    try:
+        _lock_fh = open(LOCK_FILE, "w")
+        if sys.platform == "win32":
+            import msvcrt
+            msvcrt.locking(_lock_fh.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(_lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        _lock_fh.write(str(os.getpid()))
+        _lock_fh.flush()
+    except (OSError, IOError):
+        log.error("Another training process is already running. Exiting.")
+        sys.exit(1)
 
 def _release_lock():
+    global _lock_fh
     try:
+        if _lock_fh:
+            _lock_fh.close()
         LOCK_FILE.unlink(missing_ok=True)
     except OSError:
         pass
