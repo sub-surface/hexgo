@@ -59,11 +59,11 @@ LR           = CFG["LR"]
 WEIGHT_DECAY = CFG["WEIGHT_DECAY"]
 
 # Batched self-play settings
-TOP_K        = 12      # only expand top-K moves by policy prior (reduces branching)
+TOP_K        = 16      # expanded from 12 — more candidate moves to find winning lines
 SIMS_MIN     = 16      # min sims early in training
 SIMS_RAMP    = 20      # generations to ramp from SIMS_MIN to target
 MAX_MOVES_MIN = 30     # max moves per game early in training
-MAX_MOVES_MAX = 80     # max moves per game late in training
+MAX_MOVES_MAX = 100    # compromise: fewer artificial draws than 80, faster than 150
 MAX_MOVES_RAMP = 20    # generations to ramp
 DECISIVE_DIR  = Path("replays/decisive")
 DECISIVE_DIR.mkdir(parents=True, exist_ok=True)
@@ -584,14 +584,14 @@ def train(n_gens=50, sims=100, games_per_gen=64):
     scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
     scaler = torch.amp.GradScaler(enabled=_CUDA)
     buffer = deque(maxlen=BUFFER_CAP)
-    load_buffer(buffer)
+    # Buffer persistence disabled — was causing hangs (save) and OOM (load)
 
     for gen in range(start_gen + 1, start_gen + n_gens + 1):
         log.info("--- Generation %d ---", gen)
         t_gen = time.perf_counter()
 
-        cur_sims = _curriculum_sims(gen - start_gen, sims)
-        cur_max_moves = _curriculum_max_moves(gen - start_gen)
+        cur_sims = _curriculum_sims(gen, sims)
+        cur_max_moves = _curriculum_max_moves(gen)
 
         # --- Batched self-play ---
         t_sp = time.perf_counter()
@@ -664,9 +664,8 @@ def train(n_gens=50, sims=100, games_per_gen=64):
         else:
             log.info("  Buffer too small (%d < %d)", len(buffer), BATCH_SIZE)
 
-        # Checkpoint + buffer
+        # Checkpoint (buffer persistence disabled — was blocking for 300MB+ numpy save)
         save(net, gen)
-        save_buffer(buffer)
 
         # Metrics for dashboard
         avg_loss = sum(losses) / len(losses) if losses else None
