@@ -31,8 +31,9 @@ from torch import optim
 
 from game import HexGame
 from mcts import Node, _backprop
-from net import (HexNet, encode_board, move_to_grid, DEVICE, BOARD_SIZE,
-                 param_count, d6_augment_sample, make_aux_labels, init_weights_ca)
+from net import (HexNet, encode_board, move_to_grid, top_k_from_logit_map,
+                 DEVICE, BOARD_SIZE, param_count, d6_augment_sample,
+                 make_aux_labels, init_weights_ca)
 from config import CFG
 
 _CUDA = "cuda" in str(DEVICE)
@@ -159,20 +160,12 @@ def batched_self_play(net, n_games, sims, max_moves, top_k, device):
         roots = {}
         for local_idx, i in enumerate(active_list):
             oq, or_ = origins[local_idx]
-            legal = games[i].legal_moves()
-
-            move_logits = []
-            for m in legal:
-                g = move_to_grid(m[0], m[1], oq, or_)
-                if g:
-                    move_logits.append((m, root_logits[local_idx, g[0], g[1]]))
+            move_logits = top_k_from_logit_map(
+                root_logits[local_idx], games[i].board, oq, or_, k=top_k)
 
             if not move_logits:
                 active.discard(i)
                 continue
-
-            move_logits.sort(key=lambda x: x[1], reverse=True)
-            move_logits = move_logits[:top_k]
 
             moves_k = [m for m, _ in move_logits]
             logits_k = np.array([l for _, l in move_logits], dtype=np.float32)
@@ -213,7 +206,7 @@ def batched_self_play(net, n_games, sims, max_moves, top_k, device):
             # Batch evaluate all non-terminal unexpanded leaves
             eval_values = {}
             if needs_eval:
-                eval_data = [encode_board(games[i]) for i, _, _ in needs_eval]
+                eval_data = [encode_board(games[i], fast=True) for i, _, _ in needs_eval]
                 eval_np = np.stack([d[0] for d in eval_data])
                 eval_origins = [d[1] for d in eval_data]
 
@@ -225,17 +218,10 @@ def batched_self_play(net, n_games, sims, max_moves, top_k, device):
 
                 for j, (i, node, depth) in enumerate(needs_eval):
                     oq, or_ = eval_origins[j]
-                    legal = games[i].legal_moves()
-
-                    ml = []
-                    for m in legal:
-                        g = move_to_grid(m[0], m[1], oq, or_)
-                        if g:
-                            ml.append((m, ep[j, g[0], g[1]]))
+                    ml = top_k_from_logit_map(
+                        ep[j], games[i].board, oq, or_, k=top_k)
 
                     if ml:
-                        ml.sort(key=lambda x: x[1], reverse=True)
-                        ml = ml[:top_k]
                         moves_e = [m for m, _ in ml]
                         logits_e = np.array([l for _, l in ml], dtype=np.float32)
                         logits_e -= logits_e.max()

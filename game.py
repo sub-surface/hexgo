@@ -35,13 +35,11 @@ class HexGame:
     def __init__(self):
         self.board: dict[tuple[int, int], int] = {}
         self.candidates: set[tuple[int, int]] = {(0, 0)}  # empty cells adj to pieces
-        self._legal: set[tuple[int, int]] = {(0, 0)}      # empty cells within PLACEMENT_RADIUS
         self.current_player: int = 1
         self.placements_in_turn: int = 0  # how many tiles placed in current turn
         self.winner: int | None = None
         self.move_history: list[tuple[int, int]] = []
         self.player_history: list[int] = []  # player who made each move in move_history
-        # undo stack: each entry = (move, removed_cands, added_cands, removed_legal, added_legal, prev_placements, prev_winner, prev_player)
         self._undo: list[tuple] = []
 
     # ------------------------------------------------------------------
@@ -59,27 +57,17 @@ class HexGame:
         self.move_history.append((q, r))
         self.player_history.append(self.current_player)
 
-        # Update candidates (adjacency) incrementally
-        removed_cands = set()
-        added_cands = set()
+        # Update candidates (adjacency, 6 neighbors — cheap)
+        removed = set()
+        added = set()
         if (q, r) in self.candidates:
             self.candidates.discard((q, r))
-            removed_cands.add((q, r))
+            removed.add((q, r))
         for dq, dr in DIRS:
             nb = (q + dq, r + dr)
             if nb not in self.board and nb not in self.candidates:
                 self.candidates.add(nb)
-                added_cands.add(nb)
-
-        # Update _legal (radius) incrementally: add new cells within radius, remove placed cell
-        removed_legal = set()
-        added_legal = set()
-        self._legal.discard((q, r))
-        removed_legal.add((q, r))
-        for cq, cr in _cells_within_radius(q, r, PLACEMENT_RADIUS):
-            if (cq, cr) not in self.board and (cq, cr) not in self._legal:
-                self._legal.add((cq, cr))
-                added_legal.add((cq, cr))
+                added.add(nb)
 
         won = self._check_win(q, r)
         prev_winner = self.winner
@@ -98,23 +86,19 @@ class HexGame:
                 self.current_player = 3 - self.current_player
                 self.placements_in_turn = 0
 
-        self._undo.append((q, r, removed_cands, added_cands, removed_legal, added_legal,
-                           prev_placements, prev_winner, prev_player))
+        self._undo.append((q, r, removed, added, prev_placements, prev_winner, prev_player))
         return True
 
     def unmake(self):
         """Undo the last placement."""
         if not self._undo:
             return
-        q, r, removed_cands, added_cands, removed_legal, added_legal, \
-            prev_placements, prev_winner, prev_player = self._undo.pop()
+        q, r, removed, added, prev_placements, prev_winner, prev_player = self._undo.pop()
         del self.board[(q, r)]
         self.move_history.pop()
         self.player_history.pop()
-        self.candidates -= added_cands
-        self.candidates |= removed_cands
-        self._legal -= added_legal
-        self._legal |= removed_legal
+        self.candidates -= added
+        self.candidates |= removed
         self.winner = prev_winner
         self.current_player = prev_player
         self.placements_in_turn = prev_placements
@@ -128,8 +112,15 @@ class HexGame:
     # ------------------------------------------------------------------
 
     def legal_moves(self) -> list[tuple[int, int]]:
-        """All empty cells within PLACEMENT_RADIUS of any piece (incrementally maintained)."""
-        return list(self._legal)
+        """All empty cells within PLACEMENT_RADIUS of any piece."""
+        if not self.board:
+            return [(0, 0)]
+        moves = set()
+        for pq, pr in self.board:
+            for cq, cr in _cells_within_radius(pq, pr, PLACEMENT_RADIUS):
+                if (cq, cr) not in self.board:
+                    moves.add((cq, cr))
+        return list(moves)
 
     def zoi_moves(self, margin: int = 6, lookback: int = 16) -> list[tuple[int, int]]:
         """
@@ -171,7 +162,6 @@ class HexGame:
         g = HexGame.__new__(HexGame)
         g.board = dict(self.board)
         g.candidates = set(self.candidates)
-        g._legal = set(self._legal)
         g.current_player = self.current_player
         g.placements_in_turn = self.placements_in_turn
         g.winner = self.winner

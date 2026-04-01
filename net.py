@@ -159,7 +159,7 @@ def d6_augment_sample(sample: dict, tf_idx: int) -> dict:
 
 # ── Board encoding ────────────────────────────────────────────────────────────
 
-def encode_board(game: HexGame, size: int = BOARD_SIZE) -> np.ndarray:
+def encode_board(game: HexGame, size: int = BOARD_SIZE, fast: bool = False) -> np.ndarray:
     """
     Returns float32 array [IN_CH, size, size] centered on centroid of all pieces.
     If board empty, centers at (0,0).
@@ -229,6 +229,9 @@ def encode_board(game: HexGame, size: int = BOARD_SIZE) -> np.ndarray:
         if 0 <= qi < size and 0 <= ri < size:
             arr[7 + i, ri, qi] = 1.0
 
+    if fast:
+        return arr, (oq, or_)
+
     # Axis-chain planes 11-16: Eisenstein axis decomposition.
     # For each empty candidate cell, compute the chain length along each of the
     # three Z[omega] unit axes independently, for both current player and opponent.
@@ -264,6 +267,33 @@ def move_to_grid(q: int, r: int, oq: int, or_: int,
     if 0 <= col < size and 0 <= row < size:
         return (row, col)
     return None
+
+
+def top_k_from_logit_map(logit_map, board, oq, or_, k=16, size=BOARD_SIZE,
+                         _candidates=None):
+    """Extract top-K legal moves directly from a logit map.
+
+    Scans the highest-valued cells in the logit map, checks they are empty.
+    If _candidates is provided (the adjacency set), uses it as a fast legality
+    pre-filter. Otherwise accepts any empty cell within the window.
+    """
+    half = size // 2
+    flat = logit_map.ravel()
+    n_top = min(len(flat), k * 8)
+    top_idx = np.argpartition(flat, -n_top)[-n_top:]
+    top_idx = top_idx[np.argsort(flat[top_idx])[::-1]]
+
+    result = []
+    for idx in top_idx:
+        row, col = divmod(int(idx), size)
+        q = col - half + oq
+        r = row - half + or_
+        if (q, r) in board:
+            continue
+        result.append(((q, r), float(flat[idx])))
+        if len(result) >= k:
+            break
+    return result
 
 
 def encode_move(q: int, r: int, oq: int, or_: int,
