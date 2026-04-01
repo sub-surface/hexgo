@@ -24,7 +24,7 @@ import time
 import numpy as np
 import torch
 
-from net import HexNet, encode_board, encode_move, DEVICE, BOARD_SIZE
+from net import HexNet, encode_board, move_to_grid, DEVICE, BOARD_SIZE
 
 _SENTINEL = object()
 
@@ -83,6 +83,12 @@ class InferenceServer:
 
     def start(self):
         self._running = True
+        # torch.compile: fuse trunk+value+policy into one optimized graph
+        if torch.cuda.is_available() and hasattr(torch, "compile"):
+            try:
+                self.net = torch.compile(self.net, dynamic=True)
+            except Exception:
+                pass  # non-fatal: older PyTorch or unsupported config
         self._thread.start()
 
     def stop(self):
@@ -160,31 +166,13 @@ class InferenceServer:
     def _process_batch(self, batch: list):
         """Run one batched forward pass for all requests.
 
-        Key optimisation: trunk runs once per board (batch of B boards), not once
-        per (board × move) pair. The policy head is then applied with features
-        broadcast per-request, keeping the expensive trunk pass at B=8 instead
-        of B=8*~100_moves=800. This is the dominant factor in inference latency.
+        Spatial policy head: each request = 1 row in the batch tensor.
+        trunk + value + policy_logits runs once for the whole batch,
+        then logit maps are indexed per-request to extract move logits.
         """
-        request_slices = []  # (board_idx, resp, valid_moves, key)
-        board_arrs = []
-        all_planes = []      # [1, S, S] per move, all requests concatenated
-        feat_row_idx = []    # which board (0..B-1) each move plane belongs to
+        N = len(batch)
+        boards_np = np.stack([item[0] for item in batch])   # [N, C, S, S]
 
-        for i, (board_arr, moves, oq, or_, key, resp) in enumerate(batch):
-            valid_moves = []
-            planes = []
-            for m in moves:
-                p = encode_move(m[0], m[1], oq, or_)
-                if p is not None:
-                    valid_moves.append(m)
-                    planes.append(p)
-            board_arrs.append(board_arr)
-            request_slices.append((i, resp, valid_moves, key))
-            all_planes.extend(planes)
-            feat_row_idx.extend([i] * len(planes))
-
-        # Trunk pass: B boards (not B*N_moves)
-        boards_np = np.stack(board_arrs)
         self.net.eval()
         if _CUDA:
             boards_t = (torch.from_numpy(boards_np).pin_memory()
@@ -192,36 +180,26 @@ class InferenceServer:
         else:
             boards_t = torch.tensor(boards_np, device=DEVICE)
 
-        # Build move tensors outside autocast — they are float32 inputs, not computed tensors
-        pol_t = None
-        if all_planes:
-            moves_np = np.stack(all_planes)
-            if _CUDA:
-                moves_t = (torch.from_numpy(moves_np).pin_memory()
-                           .to(DEVICE, non_blocking=True))
-            else:
-                moves_t = torch.tensor(moves_np, device=DEVICE)
-            row_idx = torch.tensor(feat_row_idx, dtype=torch.long, device=DEVICE)
-
         dev_type = "cuda" if _CUDA else "cpu"
         with torch.amp.autocast(device_type=dev_type):
             with torch.no_grad():
-                features = self.net.trunk(boards_t)          # [B, C, S, S]
-                val_t    = self.net.value(features)           # [B]
-                if all_planes:
-                    pol_t = self.net.policy_logit(features[row_idx], moves_t)  # [M]
+                features = self.net.trunk(boards_t)            # [N, C, S, S]
+                val_t    = self.net.value(features)             # [N]
+                pol_t    = self.net.policy_logits(features)     # [N, S, S]
 
-        values = val_t.float().cpu().numpy()
-        logits = pol_t.float().cpu().numpy() if pol_t is not None else np.array([])
+        values     = val_t.float().cpu().numpy()               # [N]
+        logit_maps = pol_t.float().cpu().numpy()               # [N, S, S]
 
-        offset = 0
-        for i, (board_idx, resp, valid_moves, key) in enumerate(request_slices):
-            n = len(valid_moves)
-            policy = {m: float(logits[offset + j]) for j, m in enumerate(valid_moves)}
-            offset += n
-            res = (float(values[board_idx]), policy)
+        for i, (board_arr, moves, oq, or_, key, resp) in enumerate(batch):
+            policy = {}
+            for m in moves:
+                idx = move_to_grid(m[0], m[1], oq, or_)
+                if idx is not None:
+                    row, col = idx
+                    policy[m] = float(logit_maps[i, row, col])
+            res = (float(values[i]), policy)
             with self._cache_lock:
                 self.cache[key] = res
             with _persistent_cache_lock:
-                _persistent_cache[key] = (float(values[board_idx]), policy, self.gen)
+                _persistent_cache[key] = (float(values[i]), policy, self.gen)
             resp.put(res)

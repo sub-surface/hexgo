@@ -19,12 +19,12 @@ CFG = {
     "TEMP_HORIZON": 40,
     "WEIGHT_SYNC_BATCHES": 20,
     "RECENCY_WEIGHT": 0.75,
-    "TRUNK_BLOCKS": 3,
-    "TRUNK_CHANNELS": 48,
+    "TRUNK_BLOCKS": 6,
+    "TRUNK_CHANNELS": 128,
     "WEIGHT_INIT": 'ca',
     "VALUE_LOSS_WEIGHT": 2,
     "ENTROPY_REG": 0.01,
     "AUX_LOSS_OWN": 0.1,
     "AUX_LOSS_THREAT": 0.1,
-    "UNC_LOSS_WEIGHT": 0.1,
+    "UNC_LOSS_WEIGHT": 0.0,   # disabled — was causing loss explosion early in training
 }

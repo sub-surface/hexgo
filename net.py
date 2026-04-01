@@ -6,7 +6,7 @@ Architecture (configured via config.py CFG):
   - Trunk: CFG["TRUNK_BLOCKS"] residual blocks, CFG["TRUNK_CHANNELS"] channels
     Default: 4 blocks × 64 channels. KataGo-style global pool after trunk.
   - Value head: board → scalar win probability ∈ [-1, 1]
-  - Policy head: (board, move_plane) → scalar logit per candidate move
+  - Policy head: board → spatial 18×18 logit map (one logit per cell, single forward pass)
   - Value uncertainty head: board → σ² (Gaussian NLL, diagnostic only)
   - Ownership head: board → [S, S] ∈ (-1, 1)  (+1=P1, -1=P2, 0=empty)
   - Threat head: board → [S, S] ∈ (0, 1)  (1=cell on winning 6-in-a-row)
@@ -129,35 +129,31 @@ def _transform_aux(arr: np.ndarray, tf_idx: int,
 def d6_augment_sample(sample: dict, tf_idx: int) -> dict:
     """
     Return one D6-equivalent version of a training buffer sample.
-    Board array and move coordinates are transformed consistently so the
-    visit-probability distribution stays correctly assigned to moves.
-
-    After transformation oq=or_=0 because moves are stored as relative
-    coordinates; encode_move(nq, nr, 0, 0) maps them correctly.
+    Board array, policy target, legal mask, and aux labels are spatially transformed.
+    Policy target is renormalized after transform (mass may clip at edges).
     """
-    M   = D6_MATRICES[tf_idx]
-    oq, or_ = sample['oq'], sample['or_']
-
     new_board = _transform_board(sample['board'], tf_idx)
+    new_policy = _transform_aux(sample['policy_target'], tf_idx)
+    new_mask = _transform_aux(sample['legal_mask'], tf_idx)
 
-    new_moves = []
-    for q, r in sample['moves']:
-        q_rel, r_rel = q - oq, r - or_
-        nq = int(M[0, 0] * q_rel + M[0, 1] * r_rel)
-        nr = int(M[1, 0] * q_rel + M[1, 1] * r_rel)
-        new_moves.append((nq, nr))
+    # Renormalize policy target (probability mass may clip at window edges)
+    s = new_policy.sum()
+    if s > 0:
+        new_policy = new_policy / s
 
     out = {
         'board': new_board,
-        'oq': 0, 'or_': 0,
-        'moves': new_moves,
-        'probs': sample['probs'].copy(),   # copy to prevent in-place normalization corrupting buffer
-        'z':     sample['z'],
+        'policy_target': new_policy,
+        'legal_mask': new_mask,
+        'z': sample['z'],
     }
     # Aux labels are spatial [S, S] arrays — apply the same D6 spatial remap.
     for key in ('own_label', 'threat_label'):
         if key in sample:
             out[key] = _transform_aux(sample[key], tf_idx)
+    # Preserve greedy_move for move_acc metric (not spatially transformed — just copied)
+    if 'greedy_move' in sample:
+        out['greedy_move'] = sample['greedy_move']
     return out
 
 
@@ -259,9 +255,21 @@ def encode_board(game: HexGame, size: int = BOARD_SIZE) -> np.ndarray:
     return arr, (oq, or_)
 
 
+def move_to_grid(q: int, r: int, oq: int, or_: int,
+                 size: int = BOARD_SIZE) -> tuple[int, int] | None:
+    """Map axial (q,r) to grid (row, col) indices. Returns None if out of window."""
+    half = size // 2
+    col = q - oq + half
+    row = r - or_ + half
+    if 0 <= col < size and 0 <= row < size:
+        return (row, col)
+    return None
+
+
 def encode_move(q: int, r: int, oq: int, or_: int,
                 size: int = BOARD_SIZE) -> np.ndarray | None:
-    """1-hot [1, size, size] plane for a candidate move. Returns None if out of window."""
+    """1-hot [1, size, size] plane for a candidate move. Returns None if out of window.
+    (Legacy — kept for backward compatibility.)"""
     half = size // 2
     qi = q - oq + half
     ri = r - or_ + half
@@ -418,18 +426,12 @@ class HexNet(nn.Module):
             nn.Tanh(),
         )
 
-        # Policy head — takes trunk features + 1-channel move plane
-        # 4-channel compressed map + move plane → FC hidden scales with trunk
-        p_hidden = hidden
+        # Policy head — spatial 18×18 logit map (single forward pass for full policy)
         self.p_conv = nn.Sequential(
-            nn.Conv2d(hidden, 4, 1, bias=False),
-            nn.BatchNorm2d(4),
+            nn.Conv2d(hidden, hidden, 1, bias=False),
+            nn.BatchNorm2d(hidden),
             nn.ReLU(),
-        )
-        self.p_fc = nn.Sequential(
-            nn.Linear(4 * BOARD_SIZE * BOARD_SIZE + BOARD_SIZE * BOARD_SIZE, p_hidden),
-            nn.ReLU(),
-            nn.Linear(p_hidden, 1),
+            nn.Conv2d(hidden, 1, 1),
         )
 
         # Value uncertainty head — predicts σ² of value estimate (Softplus → σ² > 0).
@@ -465,16 +467,9 @@ class HexNet(nn.Module):
         """Predicted σ² of value estimate. [B] > 0 via Softplus."""
         return self.value_var(features).squeeze(-1)  # [B]
 
-    def policy_logit(self, features: torch.Tensor,
-                     move_planes: torch.Tensor) -> torch.Tensor:
-        """
-        features:    [B, hidden, S, S]
-        move_planes: [B, 1, S, S]  — 1-hot move location
-        returns:     [B] scalar logits
-        """
-        p = self.p_conv(features).flatten(1)     # [B, 4*S*S]
-        m = move_planes.flatten(1)               # [B, S*S]
-        return self.p_fc(torch.cat([p, m], dim=1)).squeeze(-1)  # [B]
+    def policy_logits(self, features: torch.Tensor) -> torch.Tensor:
+        """features: [B, hidden, S, S] -> [B, S, S] spatial logit map."""
+        return self.p_conv(features).squeeze(1)
 
     def ownership(self, features: torch.Tensor) -> torch.Tensor:
         """features: [B, hidden, S, S] → [B, S, S] ∈ (-1, 1)"""
@@ -488,16 +483,14 @@ class HexNet(nn.Module):
         """Raw logits for use with binary_cross_entropy_with_logits (AMP-safe)."""
         return self.aux_threat(features).squeeze(1)
 
-    def forward(self, board_tensor: torch.Tensor,
-                move_planes: torch.Tensor | None = None):
+    def forward(self, board_tensor: torch.Tensor):
         """
-        board_tensor: [B, 11, S, S]
-        move_planes:  [B, 1, S, S] or None (value-only mode)
-        Returns: (value [B], policy_logit [B]) or (value [B], None)
+        board_tensor: [B, IN_CH, S, S]
+        Returns: (value [B], logit_map [B, S, S])
         """
         f = self.trunk(board_tensor)
         v = self.value(f)
-        p = self.policy_logit(f, move_planes) if move_planes is not None else None
+        p = self.policy_logits(f)
         return v, p
 
 
@@ -563,7 +556,8 @@ def make_aux_labels(game: HexGame, winner: int | None,
 @torch.no_grad()
 def evaluate(net: HexNet, game: HexGame) -> tuple[float, dict]:
     """
-    Returns (value, {move: logit}) for all legal moves.
+    Returns (value, {move: logit}) for all legal moves within the window.
+    Single forward pass through trunk + value + spatial policy heads.
     value is from current player's perspective: +1 = winning, -1 = losing.
     """
     net.eval()
@@ -572,33 +566,24 @@ def evaluate(net: HexNet, game: HexGame) -> tuple[float, dict]:
     if not moves:
         return 0.0, {}
 
-    # Filter moves within the net's window
-    valid_moves = []
-    planes = []
-    for m in moves:
-        p = encode_move(m[0], m[1], oq, or_)
-        if p is not None:
-            valid_moves.append(m)
-            planes.append(p)
-
     device = next(net.parameters()).device
+    board_t = torch.tensor(board_arr, device=device).unsqueeze(0)   # [1,C,S,S]
 
-    if not valid_moves:
-        # Fallback: evaluate value head only if all moves clipped
-        feat = net.trunk(torch.tensor(board_arr, device=device).unsqueeze(0))
-        value = net.value(feat).item()
+    with torch.amp.autocast(device_type="cuda" if "cuda" in str(device) else "cpu"):
+        f = net.trunk(board_t)
+        value = net.value(f).item()
+        logit_map = net.policy_logits(f).squeeze(0).float().cpu().numpy()  # [S, S]
+
+    policy = {}
+    for m in moves:
+        idx = move_to_grid(m[0], m[1], oq, or_)
+        if idx is not None:
+            row, col = idx
+            policy[m] = float(logit_map[row, col])
+
+    if not policy:
         return value, {}
 
-    B = len(valid_moves)
-    board_t = torch.tensor(board_arr, device=device).unsqueeze(0)   # [1,C,S,S]
-    move_t  = torch.tensor(np.stack(planes), device=device)         # [B,1,S,S]
-
-    feat1    = net.trunk(board_t)                                    # [1,F,S,S]
-    value    = net.value(feat1).item()
-    features = feat1.expand(B, -1, -1, -1)                          # [B,F,S,S] — no recompute
-    logits   = net.policy_logit(features, move_t).cpu().numpy()
-
-    policy = {m: float(l) for m, l in zip(valid_moves, logits)}
     return value, policy
 
 

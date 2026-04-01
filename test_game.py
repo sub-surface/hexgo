@@ -8,8 +8,8 @@ All tests must pass before committing or training.
 import time
 import numpy as np
 from game import HexGame
-from net import (encode_board, IN_CH, BOARD_SIZE, N_HISTORY,  # imported here so CUDA init cost is paid once
-                 D6_MATRICES, _transform_board, d6_augment_sample)
+from net import (encode_board, move_to_grid, IN_CH, BOARD_SIZE, N_HISTORY,
+                 D6_MATRICES, _transform_board, _transform_aux, d6_augment_sample)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -360,21 +360,36 @@ def test_d6_reflection_involution():
         assert np.allclose(arr, double), f"Reflection {i} applied twice should equal identity"
 
 
-def test_d6_augment_moves_consistent():
-    """After augmentation, move count and probability sum must be preserved."""
+def test_d6_augment_spatial_consistent():
+    """After augmentation, policy target sum and legal mask count are preserved."""
     g = HexGame()
     g.make(0, 0); g.make(1, 0); g.make(1, 1); g.make(0, 1)
     arr, (oq, or_) = encode_board(g)
+
+    # Build spatial policy target and legal mask
+    moves = [(2, 0), (0, 2), (-1, 0)]
+    probs = [0.5, 0.3, 0.2]
+    policy_target = np.zeros((BOARD_SIZE, BOARD_SIZE), dtype=np.float32)
+    legal_mask = np.zeros((BOARD_SIZE, BOARD_SIZE), dtype=np.float32)
+    for (q, r), p in zip(moves, probs):
+        idx = move_to_grid(q, r, oq, or_)
+        if idx is not None:
+            row, col = idx
+            policy_target[row, col] = p
+            legal_mask[row, col] = 1.0
+
     sample = {
-        'board': arr, 'oq': oq, 'or_': or_,
-        'moves': [(2, 0), (0, 2), (-1, 0)],
-        'probs': np.array([0.5, 0.3, 0.2], dtype=np.float32),
+        'board': arr,
+        'policy_target': policy_target,
+        'legal_mask': legal_mask,
         'z': 1.0,
     }
     for i in range(12):
         aug = d6_augment_sample(sample, i)
-        assert len(aug['moves']) == 3, f"tf={i}: move count changed"
-        assert abs(aug['probs'].sum() - 1.0) < 1e-5, f"tf={i}: probs don't sum to 1"
+        assert abs(aug['policy_target'].sum() - 1.0) < 1e-5, \
+            f"tf={i}: policy target doesn't sum to 1"
+        assert aug['legal_mask'].sum() == 3.0, \
+            f"tf={i}: legal mask count changed from 3 to {aug['legal_mask'].sum()}"
         assert aug['z'] == 1.0, f"tf={i}: z changed"
 
 
@@ -422,7 +437,7 @@ if __name__ == "__main__":
         test_d6_six_rotations_distinct,
         test_d6_rotation_composition,
         test_d6_reflection_involution,
-        test_d6_augment_moves_consistent,
+        test_d6_augment_spatial_consistent,
         test_eisenstein_greedy_prefers_longer_chain,
     ]
     passed = failed = 0
