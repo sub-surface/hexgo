@@ -24,8 +24,8 @@
   --red2:     #f85149;
   --purple:   #8957e5;
   --teal:     #1b7c83;
-  --p1:       #c97b1a;
-  --p2:       #1a5fa0;
+  --p1:       #c93030;
+  --p2:       #2060c0;
   --font:     'Courier New', monospace;
 }
 html, body { height: 100%; overflow: hidden; }
@@ -127,14 +127,6 @@ input[type=range] { accent-color: var(--accent); width: 100%; }
 #log-tail .warn { color: var(--orange); }
 #log-tail .ok   { color: var(--green2); }
 
-/* ── ELO table ────────────────────────────────────────────────────────── */
-#elo-table { width: 100%; border-collapse: collapse; font-size: 11px; }
-#elo-table th { color: var(--dim); padding: 4px 8px; border-bottom: 1px solid var(--border); text-align: left; font-weight: normal; letter-spacing: 1px; font-size: 10px; }
-#elo-table td { padding: 4px 8px; border-bottom: 1px solid var(--border); }
-#elo-table tr:last-child td { border-bottom: none; }
-.elo-bar-bg { background: var(--border); border-radius: 1px; height: 4px; }
-.elo-bar-fill { background: var(--accent); border-radius: 1px; height: 4px; transition: width .3s; }
-
 /* ── Training tab layout ──────────────────────────────────────────────── */
 #tab-training { padding: 8px; gap: 8px; }
 .train-top    { display: flex; gap: 8px; flex-shrink: 0; }
@@ -149,7 +141,6 @@ input[type=range] { accent-color: var(--accent); width: 100%; }
 
 <div id="tabbar">
   <div class="tab active" data-tab="training">TRAINING</div>
-  <div class="tab" data-tab="elo">ELO</div>
   <div class="tab" data-tab="replay">REPLAY</div>
   <div class="tab" data-tab="config">CONFIG</div>
   <div id="branding">HEXGO</div>
@@ -157,7 +148,7 @@ input[type=range] { accent-color: var(--accent); width: 100%; }
 
 <!-- ═══════════════════════════════ TRAINING TAB ════════════════════════════ -->
 <div class="tabpanel active" id="tab-training">
-  <!-- row 1: controls | status | last gen | gen timing -->
+  <!-- row 1: controls | status | last gen | health -->
   <div class="train-top">
 
     <!-- controls -->
@@ -165,7 +156,7 @@ input[type=range] { accent-color: var(--accent); width: 100%; }
       <div class="panel-hd">CONTROLS</div>
       <div class="panel-body col" style="gap:7px; flex:1;">
         <div><label>GENERATIONS</label><input type="number" id="c-gens"  value="50"  min="1" max="9999"></div>
-        <div><label>GAMES / GEN</label><input type="number" id="c-games" value="20"  min="1" max="200"></div>
+        <div><label>GAMES / GEN</label><input type="number" id="c-games" value="64"  min="1" max="200"></div>
         <div style="margin-top:2px; display:flex; gap:6px;">
           <button class="primary" id="btn-start" onclick="trainStart()" style="flex:1;">▶ START</button>
           <button class="danger"  id="btn-stop"  onclick="trainStop()"  style="flex:1;" disabled>■ STOP</button>
@@ -218,16 +209,16 @@ input[type=range] { accent-color: var(--accent); width: 100%; }
   </div>
   <div class="train-charts" style="flex: 0 0 0; min-height:130px;">
     <div class="panel" style="flex:1; display:flex; flex-direction:column;">
-      <div class="panel-hd">EIS WINRATE</div>
-      <div class="panel-body chart-wrap" style="padding:6px;"><canvas id="chart-eis"></canvas></div>
+      <div class="panel-hd">GAMES / SEC</div>
+      <div class="panel-body chart-wrap" style="padding:6px;"><canvas id="chart-gps"></canvas></div>
     </div>
     <div class="panel" style="flex:1; display:flex; flex-direction:column;">
-      <div class="panel-hd">MOVE ACCURACY</div>
-      <div class="panel-body chart-wrap" style="padding:6px;"><canvas id="chart-acc"></canvas></div>
+      <div class="panel-hd">SELF-PLAY TIME</div>
+      <div class="panel-body chart-wrap" style="padding:6px;"><canvas id="chart-spt"></canvas></div>
     </div>
     <div class="panel" style="flex:1; display:flex; flex-direction:column;">
-      <div class="panel-hd">VALUE SIGMA (uncertainty)</div>
-      <div class="panel-body chart-wrap" style="padding:6px;"><canvas id="chart-sigma"></canvas></div>
+      <div class="panel-hd">SIMS (curriculum)</div>
+      <div class="panel-body chart-wrap" style="padding:6px;"><canvas id="chart-sims"></canvas></div>
     </div>
     <div class="panel" style="flex:1; display:flex; flex-direction:column;">
       <div class="panel-hd">LEARNING RATE</div>
@@ -242,34 +233,6 @@ input[type=range] { accent-color: var(--accent); width: 100%; }
       <button class="icon-btn" onclick="refreshLog()" title="Refresh">↻</button>
     </div>
     <pre id="log-tail"></pre>
-  </div>
-</div>
-
-<!-- ═══════════════════════════════ ELO TAB ═════════════════════════════════ -->
-<div class="tabpanel" id="tab-elo" style="padding:8px; gap:8px;">
-  <div class="row" style="flex:1; min-height:0; align-items:flex-start;">
-    <div class="panel" style="flex:1; min-height:0; display:flex; flex-direction:column;">
-      <div class="panel-hd">
-        ELO RATINGS
-        <button class="icon-btn" onclick="loadElo()" title="Refresh">↻</button>
-      </div>
-      <div class="panel-body" style="overflow-y:auto; flex:1;">
-        <table id="elo-table">
-          <thead><tr><th>#</th><th>AGENT</th><th>RATING</th><th style="width:120px;">BAR</th></tr></thead>
-          <tbody id="elo-tbody"></tbody>
-        </table>
-      </div>
-    </div>
-    <div class="panel" style="flex:1; min-height:0; display:flex; flex-direction:column;">
-      <div class="panel-hd">ELO HISTORY (top agents)</div>
-      <div class="panel-body chart-wrap" style="flex:1; min-height:200px; padding:6px;">
-        <canvas id="chart-elo-hist"></canvas>
-      </div>
-    </div>
-    <div class="panel" style="flex:0 0 240px; display:flex; flex-direction:column;">
-      <div class="panel-hd">RECENT GAMES</div>
-      <div class="panel-body" id="elo-recent" style="overflow-y:auto; flex:1; font-size:11px;"></div>
-    </div>
   </div>
 </div>
 
@@ -346,7 +309,6 @@ document.querySelectorAll('.tab').forEach(t => {
     document.getElementById('tab-' + t.dataset.tab).classList.add('active');
     if (t.dataset.tab === 'replay') loadReplayList();
     if (t.dataset.tab === 'config') loadConfig();
-    if (t.dataset.tab === 'elo')    loadElo();
   });
 });
 
@@ -392,11 +354,10 @@ const charts = {
   lossv:  makeChart('chart-lossv',  [ds('value','#3fb950', true)]),
   lossp:  makeChart('chart-lossp',  [ds('policy','#d29922', true)]),
   ent:    makeChart('chart-ent',    [ds('entropy','#8957e5', true)], 0),
-  eis:    makeChart('chart-eis',    [ds('winrate','#3fb950', true)], 0, 1),
-  acc:    makeChart('chart-acc',    [ds('move_acc','#26a6ae', true)], 0, 1),
-  sigma:  makeChart('chart-sigma',  [ds('σ','#e07060', true)], 0),
+  gps:    makeChart('chart-gps',    [ds('games/s','#26a6ae', true)], 0),
+  spt:    makeChart('chart-spt',    [ds('sp_time','#e07060', true)], 0),
+  sims:   makeChart('chart-sims',   [ds('sims','#3fb950', true)], 0),
   lr:     makeChart('chart-lr',     [ds('lr','#586374', false)]),
-  eloHist: makeChart('chart-elo-hist', []),
 };
 
 // ── Metrics store ──────────────────────────────────────────────────────────
@@ -423,9 +384,9 @@ function rebuildCharts() {
   setChart(charts.lossv, 'avg_loss_v');
   setChart(charts.lossp, 'avg_loss_p');
   setChart(charts.ent,   'avg_ent');
-  setChart(charts.eis,   'eis_winrate');
-  setChart(charts.acc,   'move_acc');
-  setChart(charts.sigma, 'avg_sigma');
+  setChart(charts.gps,   'games_per_s');
+  setChart(charts.spt,   'sp_time_s');
+  setChart(charts.sims,  'sims');
   setChart(charts.lr,    'lr');
 }
 
@@ -439,18 +400,14 @@ function renderLastGen(d) {
   if (!d) return;
   const el = document.getElementById('last-gen-stats');
   const rows = [
-    ['Gen',       d.gen,              0],
-    ['Loss',      d.avg_loss,         4],
-    ['Loss V',    d.avg_loss_v,       4],
-    ['Loss P',    d.avg_loss_p,       4],
-    ['Loss Aux',  d.avg_aux,          4],
-    ['Entropy',   d.avg_ent,          4],
-    ['Move Acc',  d.move_acc,         3],
-    ['Eis WR',    d.eis_winrate,      3],
-    ['Val σ',     d.avg_sigma,        3],
-    ['LR',        d.lr,               5],
-    ['Buffer',    d.buffer_size,      0],
-    ['Gen time',  d.gen_time_s ? d.gen_time_s + 's' : null, 0],
+    ['Gen',         d.gen,                                        0],
+    ['Games/s',     d.games_per_s,                                2],
+    ['Positions',   d.positions,                                  0],
+    ['SP time',     d.sp_time_s != null ? d.sp_time_s + 's' : null, 0],
+    ['TR time',     d.tr_time_s != null ? d.tr_time_s + 's' : null, 0],
+    ['Buffer',      d.buffer_size,                                0],
+    ['Sims',        d.sims,                                       0],
+    ['Max moves',   d.max_moves,                                  0],
   ];
   el.innerHTML = rows.map(([k, v, dig]) =>
     `<div class="sr"><span class="sr-k">${k}</span><span class="sr-v">${v == null ? '—' : (typeof v === 'number' && dig ? v.toFixed(dig) : v)}</span></div>`
@@ -460,21 +417,32 @@ function renderLastGen(d) {
 function renderHealth(d) {
   if (!d) return;
   const checks = [];
-  // Loss spike
-  const lossOk = d.avg_loss != null && d.avg_loss < 10;
-  checks.push({ label: 'Loss normal', ok: lossOk, val: fmt(d.avg_loss) });
-  // Value loss learning
+
+  // Loss trend (good if decreasing)
+  if (_allMetrics.length >= 2) {
+    const prev = _allMetrics[_allMetrics.length - 2];
+    const decreasing = d.avg_loss != null && prev.avg_loss != null && d.avg_loss <= prev.avg_loss;
+    checks.push({ label: 'Loss trend', ok: decreasing, val: decreasing ? 'decreasing' : 'increasing' });
+  } else {
+    checks.push({ label: 'Loss trend', ok: d.avg_loss != null && d.avg_loss < 10, val: fmt(d.avg_loss) });
+  }
+
+  // Policy loss trend
+  if (_allMetrics.length >= 2) {
+    const prev = _allMetrics[_allMetrics.length - 2];
+    const decreasing = d.avg_loss_p != null && prev.avg_loss_p != null && d.avg_loss_p <= prev.avg_loss_p;
+    checks.push({ label: 'Policy loss', ok: decreasing, val: fmt(d.avg_loss_p) });
+  } else {
+    checks.push({ label: 'Policy loss', ok: d.avg_loss_p != null, val: fmt(d.avg_loss_p) });
+  }
+
+  // Value loss
   const vlOk = d.avg_loss_v != null && d.avg_loss_v < 0.25;
-  checks.push({ label: 'Value converging', ok: vlOk, val: fmt(d.avg_loss_v) });
+  checks.push({ label: 'Value loss', ok: vlOk, val: fmt(d.avg_loss_v) });
+
   // Entropy not collapsed
   const entOk = d.avg_ent != null && d.avg_ent > 1.5 && d.avg_ent < 4.5;
   checks.push({ label: 'Entropy healthy', ok: entOk, val: fmt(d.avg_ent, 3) });
-  // Move acc
-  const accOk = d.move_acc != null && d.move_acc > 0;
-  checks.push({ label: 'Move acc > 0', ok: accOk, val: fmt(d.move_acc, 3) });
-  // Sigma not diverging
-  const sigOk = d.avg_sigma != null && d.avg_sigma < 1.0;
-  checks.push({ label: 'Sigma stable', ok: sigOk, val: fmt(d.avg_sigma, 3) });
 
   document.getElementById('health-stats').innerHTML = checks.map(c =>
     `<div class="sr">
@@ -533,8 +501,13 @@ api('/api/status').then(updateStatus).catch(() => {});
 async function trainStart() {
   const gens  = document.getElementById('c-gens').value;
   const games = document.getElementById('c-games').value;
-  try { await api(`/api/train/start?gens=${gens}&games=${games}`, { method: 'POST' }); }
-  catch (e) { alert('Start failed: ' + e.message); }
+  try {
+    await api('/api/train/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gens: parseInt(gens), games: parseInt(games) })
+    });
+  } catch (e) { alert('Start failed: ' + e.message); }
 }
 async function trainStop() {
   try { await api('/api/train/stop', { method: 'POST' }); }
@@ -549,7 +522,7 @@ async function refreshLog() {
     el.innerHTML = data.lines.map(l => {
       if (/ERROR|error/.test(l)) return `<span class="err">${escHtml(l)}</span>`;
       if (/WARNING|warn/.test(l)) return `<span class="warn">${escHtml(l)}</span>`;
-      if (/Generation \d+ done|ELO|win_rate/.test(l)) return `<span class="ok">${escHtml(l)}</span>`;
+      if (/Generation \d+ done|win_rate/.test(l)) return `<span class="ok">${escHtml(l)}</span>`;
       return escHtml(l);
     }).join('\n');
     el.scrollTop = el.scrollHeight;
@@ -562,24 +535,18 @@ refreshLog();
 // ── Export ─────────────────────────────────────────────────────────────────
 async function exportData() {
   try {
-    const [metrics, elo, status] = await Promise.all([
+    const [metrics, status] = await Promise.all([
       api('/api/metrics'),
-      api('/api/elo'),
       api('/api/status'),
     ]);
     const payload = {
       exported_at: new Date().toISOString(),
       status,
       metrics,
-      elo_ratings: elo.ratings,
-      elo_history_tail: (elo.history || []).slice(-50),
       summary: {
         total_gens: metrics.length,
         latest: metrics[metrics.length - 1] || null,
-        best_move_acc: Math.max(...metrics.map(m => m.move_acc || 0)),
-        best_eis_winrate: Math.max(...metrics.map(m => m.eis_winrate || 0)),
         min_loss_v: Math.min(...metrics.filter(m => m.avg_loss_v != null).map(m => m.avg_loss_v)),
-        eis_elo: elo.ratings?.eisenstein_def ?? null,
       }
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
@@ -591,76 +558,6 @@ async function exportData() {
     URL.revokeObjectURL(url);
   } catch (e) { alert('Export failed: ' + e.message); }
 }
-
-// ── ELO tab ────────────────────────────────────────────────────────────────
-let _eloData = null;
-
-async function loadElo() {
-  try {
-    _eloData = await api('/api/elo');
-    renderEloTable(_eloData);
-    renderEloHistory(_eloData);
-    renderEloRecent(_eloData);
-  } catch (_) {}
-}
-
-function renderEloTable(data) {
-  const sorted = Object.entries(data.ratings || {}).sort((a, b) => b[1] - a[1]);
-  const maxR = sorted.length ? sorted[0][1] : 1600;
-  const tbody = document.getElementById('elo-tbody');
-  tbody.innerHTML = sorted.map(([name, r], i) => {
-    const pct = Math.round(100 * r / maxR);
-    const cls = i === 0 ? 'style="color:var(--green2)"' : '';
-    return `<tr>
-      <td style="color:var(--dim)">${i + 1}</td>
-      <td ${cls}>${name}</td>
-      <td ${cls}>${Math.round(r)}</td>
-      <td><div class="elo-bar-bg"><div class="elo-bar-fill" style="width:${pct}%"></div></div></td>
-    </tr>`;
-  }).join('');
-}
-
-function renderEloHistory(data) {
-  const hist = data.history || [];
-  // collect per-agent rating over time from history snapshots
-  const agents = {};
-  hist.forEach(h => {
-    if (!h.ratings) return;
-    Object.entries(h.ratings).forEach(([name, r]) => {
-      if (!agents[name]) agents[name] = [];
-      agents[name].push(r);
-    });
-  });
-  const COLORS = ['#2f7cdb','#3fb950','#d29922','#8957e5','#26a6ae','#f85149'];
-  const agentList = Object.keys(agents).slice(0, 6);
-  const maxLen = Math.max(...agentList.map(a => agents[a].length));
-  charts.eloHist.data.labels = Array.from({ length: maxLen }, (_, i) => i + 1);
-  charts.eloHist.data.datasets = agentList.map((name, i) => ({
-    label: name, data: agents[name],
-    borderColor: COLORS[i % COLORS.length],
-    backgroundColor: 'transparent',
-    borderWidth: 1.5, pointRadius: 0, tension: 0.2,
-  }));
-  charts.eloHist.options.plugins.legend.display = true;
-  charts.eloHist.update('none');
-}
-
-function renderEloRecent(data) {
-  const hist = (data.history || []).slice(-20).reverse();
-  document.getElementById('elo-recent').innerHTML = hist.map(h => {
-    const winner = h.winner || 'draw';
-    const wColor = h.winner ? 'var(--green2)' : 'var(--dim)';
-    return `<div style="padding:4px 0; border-bottom:1px solid var(--border); line-height:1.5;">
-      <span style="color:var(--text)">${h.a}</span>
-      <span style="color:var(--dim)"> vs </span>
-      <span style="color:var(--text)">${h.b}</span><br>
-      <span style="color:${wColor}">⇒ ${winner}</span>
-      <span style="color:var(--dim); float:right">${h.moves}mv</span>
-    </div>`;
-  }).join('');
-}
-
-setInterval(() => { if (document.getElementById('tab-elo').classList.contains('active')) loadElo(); }, 10000);
 
 // ── Config tab ─────────────────────────────────────────────────────────────
 const CONFIG_GUIDE = {
@@ -730,6 +627,47 @@ async function configApply() {
 
 // ── Replay tab ─────────────────────────────────────────────────────────────
 let _replayData = null, _replayIdx = 0, _replayBoard = {}, _replayTimer = null, _replayPlaying = false;
+let _replayZoom = 1.0, _replayPanX = 0, _replayPanY = 0;
+let _replayDragging = false, _replayDragStartX = 0, _replayDragStartY = 0, _replayPanStartX = 0, _replayPanStartY = 0;
+
+function resetReplayView() {
+  _replayZoom = 1.0;
+  _replayPanX = 0;
+  _replayPanY = 0;
+}
+
+// Mouse wheel zoom
+(function() {
+  const canvas = document.getElementById('replay-canvas');
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? -0.1 : 0.1;
+    _replayZoom = Math.max(0.3, Math.min(5.0, _replayZoom + delta));
+    if (_replayData) replayDraw();
+  }, { passive: false });
+
+  // Mouse drag to pan
+  canvas.addEventListener('mousedown', e => {
+    _replayDragging = true;
+    _replayDragStartX = e.clientX;
+    _replayDragStartY = e.clientY;
+    _replayPanStartX = _replayPanX;
+    _replayPanStartY = _replayPanY;
+    canvas.style.cursor = 'grabbing';
+  });
+  window.addEventListener('mousemove', e => {
+    if (!_replayDragging) return;
+    _replayPanX = _replayPanStartX + (e.clientX - _replayDragStartX);
+    _replayPanY = _replayPanStartY + (e.clientY - _replayDragStartY);
+    if (_replayData) replayDraw();
+  });
+  window.addEventListener('mouseup', () => {
+    if (_replayDragging) {
+      _replayDragging = false;
+      document.getElementById('replay-canvas').style.cursor = '';
+    }
+  });
+})();
 
 async function loadReplayList() {
   try {
@@ -759,6 +697,7 @@ async function loadReplay(filename) {
     _replayData = await api('/api/replay/' + filename);
     _replayIdx = 0; _replayBoard = {};
     replayStopPlay();
+    resetReplayView();
     const total = _replayData.moves.length;
     document.getElementById('r-total').textContent = total;
     document.getElementById('r-gen').textContent = _replayData.gen ?? '—';
@@ -821,9 +760,10 @@ function replayDraw() {
   const qMin = Math.min(...qs) - 1, qMax = Math.max(...qs) + 1;
   const rMin = Math.min(...rs) - 1, rMax = Math.max(...rs) + 1;
   const cols = qMax - qMin + 1, rows = rMax - rMin + 1;
-  const sz = Math.max(8, Math.min(28, Math.floor(Math.min(W / (cols * 1.6), H / (rows * 1.2)))));
-  const ox = W / 2 - sz * 1.5 * ((qMin + qMax) / 2);
-  const oy = H / 2 - sz * Math.sqrt(3) * ((rMin + rMax) / 2 + (qMin + qMax) / 4);
+  const baseSz = Math.max(8, Math.min(28, Math.floor(Math.min(W / (cols * 1.6), H / (rows * 1.2)))));
+  const sz = baseSz * _replayZoom;
+  const ox = W / 2 - sz * 1.5 * ((qMin + qMax) / 2) + _replayPanX;
+  const oy = H / 2 - sz * Math.sqrt(3) * ((rMin + rMax) / 2 + (qMin + qMax) / 4) + _replayPanY;
 
   function toXY(q, r) { return [ox + sz * 1.5 * q, oy + sz * Math.sqrt(3) * (r + q / 2)]; }
   function hexPath(cx, cy, s) {
@@ -840,19 +780,27 @@ function replayDraw() {
   for (let q = qMin; q <= qMax; q++) {
     for (let r = rMin; r <= rMax; r++) {
       const [cx, cy] = toXY(q, r);
+      // Cull off-screen hexes
+      if (cx < -sz || cx > W + sz || cy < -sz || cy > H + sz) continue;
       const key = `${q},${r}`, p = _replayBoard[key];
       const isLast = lastMove && lastMove[0] === q && lastMove[1] === r;
       hexPath(cx, cy, sz);
       if (p == null) {
-        ctx.fillStyle = '#0d1520'; ctx.strokeStyle = '#1c2a3a'; ctx.lineWidth = 0.5;
+        ctx.fillStyle = '#0a0e14'; ctx.strokeStyle = '#151e2a'; ctx.lineWidth = 0.5;
+      } else if (p === 1) {
+        // Player 1 (X): red family
+        ctx.fillStyle   = '#6a1515';
+        ctx.strokeStyle = isLast ? '#ffffff' : '#e84040';
+        ctx.lineWidth   = isLast ? 2 : 1;
       } else {
-        ctx.fillStyle   = p === 1 ? '#7a4a0a' : '#0a3a6a';
-        ctx.strokeStyle = isLast ? '#ffffff' : (p === 1 ? '#c97b1a' : '#1a5fa0');
+        // Player 2 (O): blue family
+        ctx.fillStyle   = '#0a2a5a';
+        ctx.strokeStyle = isLast ? '#ffffff' : '#3080e0';
         ctx.lineWidth   = isLast ? 2 : 1;
       }
       ctx.fill(); ctx.stroke();
       if (p != null) {
-        ctx.fillStyle = p === 1 ? '#e8a020' : '#4a9fe8';
+        ctx.fillStyle = p === 1 ? '#ff6060' : '#60a0ff';
         ctx.font = `bold ${Math.max(7, Math.floor(sz * 0.55))}px Courier New`;
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillText(p === 1 ? 'X' : 'O', cx, cy);

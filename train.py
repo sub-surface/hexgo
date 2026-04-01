@@ -64,6 +64,8 @@ SIMS_RAMP    = 20      # generations to ramp from SIMS_MIN to target
 MAX_MOVES_MIN = 30     # max moves per game early in training
 MAX_MOVES_MAX = 80     # max moves per game late in training
 MAX_MOVES_RAMP = 20    # generations to ramp
+DECISIVE_DIR  = Path("replays/decisive")
+DECISIVE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _curriculum_sims(gen, target):
@@ -82,14 +84,27 @@ def _curriculum_max_moves(gen):
 
 # -- Game recording -----------------------------------------------------------
 
-def save_replay(moves, winner, gen, label):
+def save_replay(moves, winner, gen, label, directory=None):
+    directory = directory or REPLAY_DIR
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    path = REPLAY_DIR / f"game_{label}_gen{gen:04d}_{ts}.json"
+    path = directory / f"game_{label}_gen{gen:04d}_{ts}.json"
     data = {
         "gen": gen, "label": label, "winner": winner,
         "timestamp": ts, "moves": [[q, r] for q, r in moves],
     }
     path.write_text(json.dumps(data, indent=2))
+    return path
+
+
+def save_decisive_games(results, gen):
+    """Save all decisive (non-draw) games for corpus building."""
+    saved = 0
+    for data, winner, moves in results:
+        if winner is not None and len(moves) >= 6:
+            label = f"w{winner}_m{len(moves)}"
+            save_replay(moves, winner, gen, label, directory=DECISIVE_DIR)
+            saved += 1
+    return saved
 
 
 # -- Batched lockstep MCTS self-play ------------------------------------------
@@ -506,21 +521,28 @@ def train(n_gens=50, sims=100, games_per_gen=64):
             total_moves += len(moves)
 
         avg_moves = total_moves / max(len(results), 1)
+        games_per_s = games_per_gen / max(sp_time, 0.01)
         log.info("  Self-play: %d games in %.1fs  (%.1f games/s)  avg_moves=%.0f  "
                  "sims=%d  max_moves=%d  X=%d O=%d draw=%d  positions=%d  buffer=%d",
-                 games_per_gen, sp_time, games_per_gen / max(sp_time, 0.01),
+                 games_per_gen, sp_time, games_per_s,
                  avg_moves, cur_sims, cur_max_moves,
                  game_wins[1], game_wins[2], game_wins[None],
                  total_positions, len(buffer))
 
-        # Save one replay
+        # Save decisive games for corpus
+        n_decisive = save_decisive_games(results, gen)
+        if n_decisive > 0:
+            log.info("  Saved %d decisive games to replays/decisive/", n_decisive)
+
+        # Save one representative replay
         if results:
             best = max(results, key=lambda r: len(r[2]))
             save_replay(best[2], best[1], gen, "longest")
 
         # --- Training ---
         t_tr = time.perf_counter()
-        n_batches = max(10, total_positions // BATCH_SIZE)
+        # Scale training to fill ~1 epoch of the buffer, min 10 batches
+        n_batches = max(10, len(buffer) // BATCH_SIZE)
         losses, loss_vs, loss_ps, entropies, aux_losses, sigmas = [], [], [], [], [], []
 
         for _ in range(n_batches):
@@ -564,7 +586,8 @@ def train(n_gens=50, sims=100, games_per_gen=64):
             "buffer_size": len(buffer),
             "positions": total_positions,
             "lr": optimizer.param_groups[0]["lr"],
-            "games_per_s": round(games_per_gen / max(sp_time, 0.01), 2),
+            "games_per_s": round(games_per_s, 2),
+            "decisive": n_decisive,
             "sims": cur_sims,
             "max_moves": cur_max_moves,
         }

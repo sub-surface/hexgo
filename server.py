@@ -68,7 +68,7 @@ class ProcessSingleton:
         with self._lock:
             return self._proc.returncode if self._proc else None
 
-    def start(self, gens: int = 50, games: int = 20, sims: int = 100) -> dict:
+    def start(self, gens: int = 50, games: int = 64, sims: int = 100) -> dict:
         with self._lock:
             if self._proc is not None and self._proc.poll() is None:
                 return {"ok": False, "error": "already running", "pid": self._proc.pid}
@@ -186,7 +186,7 @@ def api_status():
 
 
 @app.post("/api/train/start")
-def api_train_start(gens: int = 50, games: int = 20, sims: int = 100):
+def api_train_start(gens: int = 50, games: int = 64, sims: int = 100):
     result = _singleton.start(gens=gens, games=games, sims=sims)
     if result["ok"]:
         _broadcast({"type": "status", "data": _singleton.status()})
@@ -344,4 +344,4 @@ async def api_events():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=7860, log_level="warning")
+    uvicorn.run(app, host="127.0.0.1", port=1234, log_level="warning")
