@@ -284,13 +284,25 @@ def api_config_write(cfg: dict):
 def api_replays():
     if not REPLAYS_DIR.exists():
         return []
-    files = sorted(REPLAYS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
-    return [p.name for p in files]
+    # Include replays from root and decisive/ subdirectory
+    files = list(REPLAYS_DIR.glob("*.json"))
+    decisive_dir = REPLAYS_DIR / "decisive"
+    if decisive_dir.exists():
+        files.extend(decisive_dir.glob("*.json"))
+    files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    # Return relative path from REPLAYS_DIR so the replay endpoint can find them
+    result = []
+    for p in files:
+        if p.parent == REPLAYS_DIR:
+            result.append(p.name)
+        else:
+            result.append(f"{p.parent.name}/{p.name}")
+    return result
 
 
-@app.get("/api/replay/{filename}")
+@app.get("/api/replay/{filename:path}")
 def api_replay(filename: str):
-    if "/" in filename or "\\" in filename or ".." in filename:
+    if ".." in filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
     path = REPLAYS_DIR / filename
     if not path.exists():
