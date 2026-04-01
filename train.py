@@ -14,6 +14,7 @@ import argparse
 import json
 import logging
 import math
+import os
 import pickle
 import random
 import shutil
@@ -160,7 +161,7 @@ def batched_self_play(net, n_games, sims, max_moves, top_k, device):
         roots = {}
         for local_idx, i in enumerate(active_list):
             oq, or_ = origins[local_idx]
-            legal = games[i].zoi_moves(zoi_margin, zoi_lookback)
+            legal = games[i].legal_moves()
 
             move_logits = []
             for m in legal:
@@ -224,7 +225,7 @@ def batched_self_play(net, n_games, sims, max_moves, top_k, device):
                         cache_hits += 1
                         c_val, c_logits, c_origin = eval_cache[cache_key]
                         oq, or_ = c_origin
-                        legal = games[i].zoi_moves(zoi_margin, zoi_lookback)
+                        legal = games[i].legal_moves()
                         ml = []
                         for m in legal:
                             g = move_to_grid(m[0], m[1], oq, or_)
@@ -266,7 +267,7 @@ def batched_self_play(net, n_games, sims, max_moves, top_k, device):
                         # Store in cache
                         eval_cache[cache_key] = (float(ev[j]), ep[j], (oq, or_))
 
-                        legal = games[i].zoi_moves(zoi_margin, zoi_lookback)
+                        legal = games[i].legal_moves()
                         ml = []
                         for m in legal:
                             g = move_to_grid(m[0], m[1], oq, or_)
@@ -598,7 +599,37 @@ def load_buffer(buffer):
 
 # -- Main training loop --------------------------------------------------------
 
+LOCK_FILE = Path("train.lock")
+
+def _acquire_lock():
+    """Prevent multiple training processes. Exit if another is running."""
+    if LOCK_FILE.exists():
+        try:
+            old_pid = int(LOCK_FILE.read_text().strip())
+            # Check if that PID is still alive
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.OpenProcess(0x1000, False, old_pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+            if handle:
+                kernel32.CloseHandle(handle)
+                log.error("Another training process is running (PID %d). Exiting.", old_pid)
+                sys.exit(1)
+        except (ValueError, OSError, AttributeError):
+            pass  # stale lock or not on Windows — proceed
+    LOCK_FILE.write_text(str(os.getpid()))
+
+def _release_lock():
+    try:
+        LOCK_FILE.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def train(n_gens=50, sims=100, games_per_gen=64):
+    _acquire_lock()
+    import atexit
+    atexit.register(_release_lock)
+
     log.info("=== HexGo Training (Batched MCTS) ===")
     log.info("Device=%s  Params=%s  SIMS=%d  GAMES/GEN=%d  TOP_K=%d  BATCH=%d",
              DEVICE, f"{param_count(HexNet()):,}", sims, games_per_gen, TOP_K, BATCH_SIZE)
