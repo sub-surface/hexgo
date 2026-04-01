@@ -32,3 +32,4 @@ replays/*.png
 # OS
 .DS_Store
 Thumbs.db
+train.log
