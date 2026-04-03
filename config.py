@@ -9,7 +9,7 @@ CFG = {
     "SIMS": 100,
     "SIMS_MIN": 25,
     "CAP_FULL_FRAC": 0,
-    "CPUCT": 2.0,               # research target 2.0–2.5; pairs with 400 sims
+    "CPUCT": 3.0,               # higher exploration to force diverse self-play moves
     "DIRICHLET_ALPHA": 0.10,    # ~10/|ZoI|; less noise needed with deeper search
     "DIRICHLET_EPS": 0.25,      # reduced — 400 sims provides enough exploration
     "ZOI_MARGIN": 5,
