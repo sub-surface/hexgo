@@ -397,16 +397,12 @@ def train_batch(net, optimizer, scaler, buffer):
     if len(buffer) < BATCH_SIZE:
         return {}
 
-    # Recency-weighted sampling
-    rw = CFG.get("RECENCY_WEIGHT", 0.75)
+    # Exponential-decay sampling: recent positions weighted higher, smooth falloff
     buf_list = list(buffer)
-    n_recent = max(1, len(buf_list) // 2)
-    recent_half = buf_list[-n_recent:]
-    n_from_recent = int(BATCH_SIZE * rw)
-    n_from_all = BATCH_SIZE - n_from_recent
-    batch = (random.sample(recent_half, min(n_from_recent, len(recent_half))) +
-             random.sample(buf_list, min(n_from_all, len(buf_list))))
-    random.shuffle(batch)
+    n = len(buf_list)
+    half_life = 5000 * 10  # ~10 gens of positions
+    weights = [math.exp(-i / half_life) for i in range(n - 1, -1, -1)]  # newest=1.0
+    batch = random.choices(buf_list, weights=weights, k=BATCH_SIZE)
 
     # D6 augmentation
     batch = [d6_augment_sample(item, random.randrange(12)) for item in batch]
