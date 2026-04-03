@@ -771,10 +771,6 @@ def train(n_gens=50, sims=100, games_per_gen=64):
     buffer = deque(maxlen=BUFFER_CAP)
     load_buffer(buffer)
 
-    # EMA shadow weights for smoother self-play policy
-    EMA_DECAY = 0.995
-    ema_state = {k: v.clone() for k, v in net.state_dict().items()}
-
     for gen in range(start_gen + 1, start_gen + n_gens + 1):
         log.info("--- Generation %d ---", gen)
         t_gen = time.perf_counter()
@@ -783,9 +779,7 @@ def train(n_gens=50, sims=100, games_per_gen=64):
         cur_max_moves = _curriculum_max_moves(gen)
         cur_zoi = _curriculum_zoi(gen)
 
-        # --- Batched self-play (using EMA weights) ---
-        train_state = {k: v.clone() for k, v in net.state_dict().items()}
-        net.load_state_dict(ema_state)
+        # --- Batched self-play ---
         t_sp = time.perf_counter()
         if _HAS_RUST_BATCHED:
             eval_fn = make_eval_fn(net, DEVICE)
@@ -843,18 +837,10 @@ def train(n_gens=50, sims=100, games_per_gen=64):
             best = max(results, key=lambda r: len(r[2]))
             save_replay(best[2], best[1], gen, "longest")
 
-        # --- Training (restore training weights, then update EMA after) ---
-        net.load_state_dict(train_state)
+        # --- Training ---
         t_tr = time.perf_counter()
         n_batches = max(10, min(len(buffer) // BATCH_SIZE, 150))
         tr_metrics = _run_training_block(net, optimizer, buffer, n_batches)
-        # Update EMA shadow weights (skip non-float like num_batches_tracked)
-        with torch.no_grad():
-            for k in ema_state:
-                if ema_state[k].is_floating_point():
-                    ema_state[k].mul_(EMA_DECAY).add_(net.state_dict()[k], alpha=1 - EMA_DECAY)
-                else:
-                    ema_state[k].copy_(net.state_dict()[k])
         tr_time = time.perf_counter() - t_tr
 
         if tr_metrics:
