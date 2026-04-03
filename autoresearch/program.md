@@ -1,80 +1,109 @@
-# HexGo AutoResearch Protocol
+# HexGo AutoResearch — Agent Instructions
 
-## Setup
+## Overview
+
+You are an autonomous ML research agent optimizing HexGo's AlphaZero training pipeline.
+You run experiments in a loop: **propose change → train → evaluate → keep/discard → repeat**.
+
+**NEVER STOP.** After each experiment, immediately start the next one.
+
+## Environment
 
 - **Project**: `C:\Users\landa\.claude\projects\hexgo2`
-- **Python**: `bash run.sh <script.py>` (hardcodes correct interpreter)
+- **Python**: `C:\Users\landa\AppData\Local\Programs\Python\Python312\python.exe`
 - **GPU**: RTX 5070 Ti (16GB VRAM)
-- **Metric**: Net win rate vs Eisenstein (24 games, Rust-batched)
-- **Secondary**: Value loss (v=), policy loss (p=), avg_moves
-- **Budget**: 10 generations per trial (~20 min)
+- **Training**: `bash run.sh train.py --gens <N> --sims 200 --games 128`
+- **Experiment runner**: `bash run.sh autoresearch/run_trial.py --gens 10`
 
 ## The Loop
 
-### 1. READ BASELINE
-```
-tail -50 train.log   # find last ELO eval line + last gen metrics
-```
-Record: `v=`, `p=`, `avg_moves`, `eval_eis_wins`, `eval_mm_wins`.
+### 1. READ STATE
+- Read `autoresearch/results.tsv` to see past experiments and what worked/failed
+- Read `config.py` and the top of `train.py` (lines 60-85) to see current hyperparameters
+- Read `metrics.jsonl` last 10 lines for recent training metrics
+- Read `train.log` last 20 lines for current training status
 
 ### 2. PROPOSE ONE CHANGE
 - Pick ONE thing to change. Not two. ONE.
-- Write hypothesis: "Changing X from A to B should improve Y because Z"
-- Allowed edits: `train.py`, `net.py`, `config.py`
-- Do NOT touch: `game.py`, `hexgo-rs/`, `mcts.py`
+- Write a clear hypothesis: "Changing X from A to B should improve Y because Z"
+- Mutations can target:
+  - `config.py` CFG dict values (CPUCT, DIRICHLET_*, ENTROPY_REG, loss weights, etc.)
+  - `train.py` constants (BUFFER_CAP, BATCH_SIZE, LR, TOP_K, SIMS_MIN, SIMS_RAMP, MAX_MOVES_*, TD_LAMBDA)
+  - `train.py` training logic (LR schedule, batch sampling, loss computation)
+  - `net.py` architecture (head sizes, activation functions — careful with these)
+- Do NOT touch: `game.py`, `hexgo-rs/`, `mcts.py` (game logic is correct and tested)
 
-### 3. IMPLEMENT + COMMIT
-```
-# edit the file(s)
-git add -A && git commit -m "autoresearch: <short description>"
-```
+### 3. IMPLEMENT
+- Make the code change
+- `git add -A && git commit -m "autoresearch: <short description>"`
 
 ### 4. RUN TRIAL
+```bash
+bash run.sh autoresearch/run_trial.py --gens 10
 ```
-bash run.sh train.py --gens 10 --sims 200 --games 128
+This will:
+- Stop any running training
+- Save current checkpoint as baseline
+- Train for 10 generations
+- Run a 12-game ELO evaluation
+- Output a JSON result to stdout
+
+### 5. EVALUATE
+Parse the trial result JSON:
+```json
+{
+  "baseline_loss": 2.85,
+  "trial_loss": 2.80,
+  "baseline_elo": 1200,
+  "trial_elo": 1250,
+  "decisive_ratio": 0.85,
+  "avg_moves": 65,
+  "kept": true
+}
 ```
-Wait for completion. Training logs to `train.log`. ELO eval runs every 10 gens.
 
-### 5. READ RESULTS
-```
-tail -30 train.log   # find ELO eval + final gen metrics
-```
-Record same metrics as baseline.
+**Keep criteria** (ANY of these):
+- `trial_elo > baseline_elo + 10` (ELO improvement)
+- `trial_loss < baseline_loss - 0.02` AND `decisive_ratio > 0.7` (loss + quality improvement)
 
-### 6. DECIDE
-**Keep** if ANY:
-- `eval_eis_wins` improved by 2+ (e.g. 2/24 → 4/24)
-- `v` dropped by 0.01+ AND `eval_eis_wins` did not regress
-- `eval_mm_wins` improved by 2+ without Eisenstein regression
+**Discard criteria**:
+- `trial_elo < baseline_elo - 20` (significant ELO regression)
+- `trial_loss > baseline_loss + 0.05` (loss regression)
+- Training crashed or produced NaN
 
-**Discard** if ANY:
-- `eval_eis_wins` dropped by 2+
-- `v` increased by 0.02+
-- Training crashed or NaN
+### 6. KEEP OR DISCARD
+- **If kept**: Log success to `autoresearch/results.tsv`. Continue from new state.
+- **If discarded**: `git revert HEAD --no-edit`. Restore baseline checkpoint. Log failure.
 
-**Neutral** (keep if simpler, discard if adds complexity):
-- Metrics within noise band (+-1 win, +-0.005 v)
-
-### 7. KEEP OR REVERT
-- **Keep**: Log to `results.tsv`. This is the new baseline.
-- **Discard**: `git revert HEAD --no-edit`. Restore checkpoint:
-  ```
-  cp checkpoints/net_baseline_trial.pt checkpoints/net_latest.pt
-  ```
-
-### 8. LOG
+### 7. LOG
 Append one line to `autoresearch/results.tsv`:
 ```
-timestamp	experiment	hypothesis	v_before	v_after	eis_before	eis_after	mm_before	mm_after	kept	reason
+timestamp	experiment_id	description	hypothesis	metric_before	metric_after	elo_before	elo_after	kept	git_hash
 ```
 
-### 9. LOOP TO STEP 1
+### 8. LOOP BACK TO STEP 1
 
-## Rules
-- NEVER delete `train.lock`
-- NEVER run training while another is running
-- Save baseline checkpoint before each trial: `cp checkpoints/net_latest.pt checkpoints/net_baseline_trial.pt`
-- One change at a time — isolate variables
-- If 3 consecutive experiments fail, stop and reconsider approach
-- Git branch tip is always the best known config
-- Simpler is better — reject marginal gains that add complexity
+## Experiment Priority Queue
+
+Start with these (Tier 2 from research analysis), in order:
+1. TOP_K curriculum: ramp from 64→24 over 20 gens
+2. Cosine warm restarts (T_0=20, T_mult=2) instead of single cosine
+3. Increase buffer to 300K with exponential decay sampling
+4. Increase ELO eval from 6 to 12 games
+5. Down-weight draw games in buffer (0.5x sampling weight)
+6. Short-term value auxiliary targets (6-turn and 16-turn horizons)
+
+After exhausting the queue, propose your own experiments based on results.
+
+## Constraints
+
+- **Budget per trial**: 10 generations (if gens take >5 min each, reduce to 5 gens)
+- **Never delete train.lock** — it's an OS-level process lock
+- **Never run training while another training is running** — check the lock first
+- **Save buffer before stopping training** — wait for current gen to complete
+- **One change at a time** — isolate variables for clean attribution
+- **If 3 consecutive experiments fail, pause and re-read recent results to reconsider approach**
+
+## Success Metric
+
+The ultimate goal: **maximize ELO vs EisensteinGreedyAgent**. Everything else (loss, decisive ratio, game length) is a proxy. When in doubt, trust ELO.

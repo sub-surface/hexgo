@@ -43,60 +43,6 @@ from net import (HexNet, encode_board, move_to_grid, top_k_from_logit_map,
 from elo import ELO, NetAgent, EisensteinGreedyAgent, run_match
 from config import CFG
 
-# MinimaxBot agent for ELO eval (uses ext/HexTicTacToe)
-_MINIMAX_AGENT = None
-try:
-    import sys as _sys
-    _ext_dir = str(Path(__file__).resolve().parent / "ext" / "HexTicTacToe")
-    _our_game = _sys.modules.get("game")
-    _our_bot = _sys.modules.get("bot")
-    _sys.modules.pop("game", None)
-    _sys.modules.pop("bot", None)
-    _sys.path.insert(0, _ext_dir)
-    try:
-        import game as _ext_game
-        import bot as _ext_bot
-        import ai as _ext_ai
-    finally:
-        _sys.path.remove(_ext_dir)
-        if _our_game: _sys.modules["game"] = _our_game
-        if _our_bot: _sys.modules["bot"] = _our_bot
-
-    _pattern_path = str(Path(__file__).resolve().parent / "ext" / "HexTicTacToe" /
-                        "learned_eval" / "results_baseline_8k" / "pattern_values.json")
-
-    class MinimaxEvalAgent:
-        """Wrapper around ext MinimaxBot for ELO evaluation."""
-        def __init__(self, time_limit=0.5):
-            _sys.path.insert(0, _ext_dir)
-            try:
-                self.bot = _ext_ai.MinimaxBot(time_limit=time_limit, pattern_path=_pattern_path)
-            finally:
-                if _ext_dir in _sys.path:
-                    _sys.path.remove(_ext_dir)
-            self.name = "minimax_bot"
-            self._pending = None
-
-        def choose_move(self, game):
-            if self._pending is not None:
-                move = self._pending
-                self._pending = None
-                return move
-            ext_game = _ext_game.HexGame()
-            for q, r in game.move_history:
-                ext_game.make_move(q, r)
-            result = self.bot.get_move(ext_game)
-            if isinstance(result, list) and len(result) >= 2:
-                self._pending = tuple(result[1])
-                return tuple(result[0])
-            elif isinstance(result, list):
-                return tuple(result[0])
-            return tuple(result)
-
-    _MINIMAX_AGENT = True  # flag that it's available
-except Exception:
-    pass
-
 _CUDA = "cuda" in str(DEVICE)
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -116,7 +62,7 @@ CHECKPOINT_DIR.mkdir(exist_ok=True)
 REPLAY_DIR = Path("replays")
 REPLAY_DIR.mkdir(exist_ok=True)
 
-BUFFER_CAP   = 80_000   # ~18 gens of data, balance between diversity and freshness
+BUFFER_CAP   = 100_000  # smaller buffer flushes bad data faster
 BATCH_SIZE   = 512      # large batch to saturate GPU during training
 LR           = 2e-4     # conservative LR for stable self-play training
 WEIGHT_DECAY = 3e-5     # lighter regularization for small network
@@ -139,12 +85,11 @@ ZOI_MARGIN_RAMP = 30      # generations to ramp from MIN to MAX
 ZOI_LOOKBACK    = 16      # recent moves defining ZOI focus
 
 
-def _curriculum_zoi(gen, start_gen=0):
-    """Linearly ramp ZOI margin from MIN to MAX over RAMP gens since start."""
-    elapsed = gen - start_gen
-    if elapsed >= ZOI_MARGIN_RAMP:
+def _curriculum_zoi(gen):
+    """Linearly ramp ZOI margin from MIN to MAX over RAMP generations."""
+    if gen >= ZOI_MARGIN_RAMP:
         return ZOI_MARGIN_MAX
-    return ZOI_MARGIN_MIN + (ZOI_MARGIN_MAX - ZOI_MARGIN_MIN) * elapsed // ZOI_MARGIN_RAMP
+    return ZOI_MARGIN_MIN + (ZOI_MARGIN_MAX - ZOI_MARGIN_MIN) * gen // ZOI_MARGIN_RAMP
 
 
 def _curriculum_sims(gen, target):
@@ -464,8 +409,7 @@ def train_batch(net, optimizer, scaler, buffer):
     random.shuffle(batch)
 
     # D6 augmentation
-    # D3 augmentation: 6 rotations only (no reflections) — more strategic diversity per batch
-    batch = [d6_augment_sample(item, random.randrange(6)) for item in batch]
+    batch = [d6_augment_sample(item, random.randrange(12)) for item in batch]
     net.train()
 
     boards_np = np.stack([b["board"] for b in batch])
@@ -683,73 +627,6 @@ def make_eval_fn(net, device):
     return eval_batch
 
 
-def _play_eisenstein_games(net, n_games, sims, max_moves):
-    """Play net vs EisensteinGreedy. Returns positions for value+aux training.
-
-    Policy targets are zeroed (legal_mask=0) so the policy loss is automatically
-    skipped for these positions. The value head learns 'opponent 4-chain = danger'
-    from game outcomes, and aux heads learn ownership/threat patterns.
-    """
-    from mcts import mcts_with_net
-    eis = EisensteinGreedyAgent(defensive=True)
-    net.eval()
-    all_results = []
-
-    for game_idx in range(n_games):
-        game = HexGame()
-        eis_player = 1 + (game_idx % 2)  # alternate sides
-        moves = []
-        move_count = 0
-
-        while game.winner is None and move_count < max_moves:
-            if game.current_player == eis_player:
-                move = eis.choose_move(game)
-            else:
-                move = mcts_with_net(game, net, sims)
-            game.make(*move)
-            moves.append(move)
-            move_count += 1
-
-        winner = game.winner
-
-        # Replay to encode each position
-        replay = HexGame()
-        positions = []
-        for move in moves:
-            board_enc, origin = encode_board(replay)
-            player = replay.current_player
-            # Value: pure game outcome from this player's perspective
-            if winner is None:
-                z = 0.0
-            elif winner == player:
-                z = 1.0
-            else:
-                z = -1.0
-            positions.append({
-                "board": board_enc,
-                "policy_target": np.zeros((BOARD_SIZE, BOARD_SIZE), dtype=np.float32),
-                "legal_mask": np.zeros((BOARD_SIZE, BOARD_SIZE), dtype=np.float32),
-                "z": z,
-            })
-            replay.make(*move)
-
-        # Aux labels from final state
-        if positions:
-            oq, or_ = positions[-1].get("_origin", (0, 0))
-            # Use centroid of all moves as origin for aux labels
-            if moves:
-                oq = sum(m[0] for m in moves) // len(moves)
-                or_ = sum(m[1] for m in moves) // len(moves)
-            own_label, threat_label = make_aux_labels(replay, winner, oq, or_)
-            for pos in positions:
-                pos["own_label"] = own_label
-                pos["threat_label"] = threat_label
-
-        all_results.append((positions, winner, moves))
-
-    return all_results
-
-
 def _postprocess_rust_results(raw_results):
     """Convert Rust GameTrainingResult objects, apply TD-lambda + aux labels."""
     td_gamma = CFG.get("TD_GAMMA", 0.99)
@@ -885,9 +762,13 @@ def train(n_gens=50, sims=100, games_per_gen=64):
         log.info("Initialized HexConv2d kernels with hex-Laplacian CA priors.")
 
     optimizer = optim.Adam(net.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
-    # Steady cosine decay over n_gens — no warm restarts
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=n_gens, eta_min=LR * 0.01)
+    WARMUP_GENS = 5
+    def lr_lambda(gen_idx):
+        if gen_idx < WARMUP_GENS:
+            return 0.1 + 0.9 * gen_idx / WARMUP_GENS
+        cosine_progress = (gen_idx - WARMUP_GENS) / max(n_gens - WARMUP_GENS, 1)
+        return 0.01 + 0.99 * 0.5 * (1 + math.cos(math.pi * cosine_progress))
+    scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
     # Fast-forward scheduler to current gen so LR doesn't reset on restart
     for _ in range(start_gen):
         scheduler.step()
@@ -900,10 +781,9 @@ def train(n_gens=50, sims=100, games_per_gen=64):
 
         cur_sims = _curriculum_sims(gen, sims)
         cur_max_moves = _curriculum_max_moves(gen)
-        cur_zoi = _curriculum_zoi(gen, start_gen)
+        cur_zoi = _curriculum_zoi(gen)
 
         # --- Batched self-play ---
-        n_eis = max(1, games_per_gen * 2 // 3)  # 40% of total = ~85 opponent games
         t_sp = time.perf_counter()
         if _HAS_RUST_BATCHED:
             eval_fn = make_eval_fn(net, DEVICE)
@@ -917,8 +797,6 @@ def train(n_gens=50, sims=100, games_per_gen=64):
                 random_opening_frac=RANDOM_OPENING_FRAC,
                 zoi_margin=cur_zoi,
                 zoi_lookback=ZOI_LOOKBACK,
-                n_eisenstein_games=n_eis,
-                minimax_pattern_path=str(Path("ext/HexTicTacToe/learned_eval/results_baseline_8k/pattern_values.json").resolve()),
             )
             results = _postprocess_rust_results(raw)
         else:
@@ -938,11 +816,10 @@ def train(n_gens=50, sims=100, games_per_gen=64):
             total_moves += len(moves)
 
         avg_moves = total_moves / max(len(results), 1)
-        n_total_games = games_per_gen + n_eis
-        games_per_s = n_total_games / max(sp_time, 0.01)
-        log.info("  Self-play: %d+%d(eis) games in %.1fs  (%.1f games/s)  avg_moves=%.0f  "
+        games_per_s = games_per_gen / max(sp_time, 0.01)
+        log.info("  Self-play: %d games in %.1fs  (%.1f games/s)  avg_moves=%.0f  "
                  "sims=%d  max_moves=%d  X=%d O=%d draw=%d  positions=%d  buffer=%d",
-                 games_per_gen, n_eis, sp_time, games_per_s,
+                 games_per_gen, sp_time, games_per_s,
                  avg_moves, cur_sims, cur_max_moves,
                  game_wins[1], game_wins[2], game_wins[None],
                  total_positions, len(buffer))
@@ -966,7 +843,7 @@ def train(n_gens=50, sims=100, games_per_gen=64):
 
         # --- Training ---
         t_tr = time.perf_counter()
-        n_batches = max(10, min(len(buffer) // BATCH_SIZE, 100))
+        n_batches = max(10, min(len(buffer) // BATCH_SIZE, 150))
         tr_metrics = _run_training_block(net, optimizer, buffer, n_batches)
         tr_time = time.perf_counter() - t_tr
 
@@ -1005,83 +882,20 @@ def train(n_gens=50, sims=100, games_per_gen=64):
         with open("metrics.jsonl", "a", encoding="utf-8") as mf:
             mf.write(json.dumps(_metrics) + "\n")
 
-        # Fast Rust-batched ELO eval every 10 generations
-        if gen % 10 == 0 and _HAS_RUST_BATCHED:
+        # Lightweight ELO eval every 10 generations
+        if gen % 10 == 0:
             try:
-                eval_fn = make_eval_fn(net, DEVICE)
-                pattern_path = str(Path("ext/HexTicTacToe/learned_eval/results_baseline_8k/pattern_values.json").resolve())
-
-                # vs Eisenstein: 24 games (batched, ~30s)
-                eis_results = rust_batched_self_play(
-                    eval_fn, 0, sims, 120,
-                    top_k=TOP_K, c_puct=CFG["CPUCT"],
-                    dirichlet_alpha=0.10, dirichlet_eps=0.15,
-                    temp_horizon=5,  # low temp = near-argmax for eval
-                    n_eisenstein_games=24,
-                )
-                eis_wins = sum(1 for r in eis_results if r.winner is not None
-                               and r.winner != 0  # someone won
-                               # net wins when eisenstein_player loses
-                               # Eis alternates sides: even=P1, odd=P2
-                               # If eis is P1 and winner=2 → net won; if eis is P2 and winner=1 → net won
-                               )
-                # Count properly: eis plays P1 for even games, P2 for odd
-                net_wins_eis = 0
-                for i, r in enumerate(eis_results):
-                    eis_p = 1 if i % 2 == 0 else 2
-                    if r.winner is not None and r.winner != eis_p:
-                        net_wins_eis += 1
-                log.info("  ELO eval (batched): net won %d/24 vs Eisenstein", net_wins_eis)
-                _metrics["eval_eis_wins"] = net_wins_eis
-                _metrics["eval_eis_total"] = 24
-
-                # vs MinimaxBot: 24 games (batched, ~30s)
-                mm_results = rust_batched_self_play(
-                    eval_fn, 0, sims, 120,
-                    top_k=TOP_K, c_puct=CFG["CPUCT"],
-                    dirichlet_alpha=0.10, dirichlet_eps=0.15,
-                    temp_horizon=5,
-                    n_eisenstein_games=24,
-                    minimax_pattern_path=pattern_path,
-                )
-                net_wins_mm = 0
-                for i, r in enumerate(mm_results):
-                    mm_p = 1 if i % 2 == 0 else 2
-                    if r.winner is not None and r.winner != mm_p:
-                        net_wins_mm += 1
-                log.info("  ELO eval (batched): net won %d/24 vs MinimaxBot", net_wins_mm)
-                _metrics["eval_mm_wins"] = net_wins_mm
-                _metrics["eval_mm_total"] = 24
-
-                # vs older checkpoint (gen-50 or earliest available)
-                older_gen = max(1, gen - 50)
-                older_path = CHECKPOINT_DIR / f"net_gen{older_gen:04d}.pt"
-                if older_path.exists():
-                    old_net = HexNet().to(DEVICE)
-                    old_state = torch.load(older_path, map_location=DEVICE)
-                    old_target = old_net.state_dict()
-                    for key in list(old_state.keys()):
-                        if key in old_target and old_state[key].shape != old_target[key].shape:
-                            del old_state[key]
-                    old_net.load_state_dict(old_state, strict=False)
-                    old_net.eval()
-                    old_eval = make_eval_fn(old_net, DEVICE)
-                    # Play 12 games: current net as self-play, old net doesn't participate
-                    # Instead: use Python match for checkpoint comparison (simpler)
-                    from elo import run_match as _rm
-                    fresh_elo = ELO.__new__(ELO)
-                    fresh_elo.ratings = {}
-                    fresh_elo.history = []
-                    cur_agent = NetAgent(net, sims=50, name="current",
-                                        dirichlet_eps=0.15, dirichlet_alpha=0.10)
-                    old_agent = NetAgent(old_net, sims=50, name=f"gen{older_gen}",
-                                        dirichlet_eps=0.15, dirichlet_alpha=0.10)
-                    cp_result = _rm(cur_agent, old_agent, n_games=6, elo=fresh_elo, verbose=False)
-                    cp_wins = cp_result.get("wins_current", 0)
-                    log.info("  ELO eval: current won %d/6 vs gen%d", cp_wins, older_gen)
-                    _metrics["eval_vs_old_wins"] = cp_wins
-                    _metrics["eval_vs_old_gen"] = older_gen
-
+                elo_tracker = ELO()
+                net_agent = NetAgent(net, sims=50, name=f"net_gen{gen:04d}")
+                eis_agent = EisensteinGreedyAgent("eisenstein_def", defensive=True)
+                elo_result = run_match(net_agent, eis_agent, n_games=6, elo=elo_tracker, verbose=False)
+                net_rating = elo_tracker.rating(net_agent.name)
+                eis_rating = elo_tracker.rating(eis_agent.name)
+                net_wins = elo_result.get(f"wins_{net_agent.name}", 0)
+                log.info("  ELO eval: net=%d  eis=%d  (net won %d/6)",
+                         net_rating, eis_rating, net_wins)
+                _metrics["elo_net"] = round(net_rating, 1)
+                _metrics["elo_eis"] = round(eis_rating, 1)
                 lines = Path("metrics.jsonl").read_text().rstrip().split("\n")
                 lines[-1] = json.dumps(_metrics)
                 Path("metrics.jsonl").write_text("\n".join(lines) + "\n")
