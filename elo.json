@@ -1,8 +1,29 @@
 {
   "ratings": {
-    "eisenstein_def": 1338.2429772183236,
+    "eisenstein_def": 1753.7417135970236,
     "net_gen0010": 1123.0374294577985,
-    "net_gen0020": 1138.719593323878
+    "net_gen0020": 1138.719593323878,
+    "net_gen0030": 1150.1687301953516,
+    "net_gen0040": 1242.5073045272006,
+    "net_gen0050": 1203.8431558883815,
+    "net_gen0060": 1199.4229332934942,
+    "net_gen0070": 1140.0279882811742,
+    "net_gen0080": 1151.12443017196,
+    "net_gen0090": 1159.2864102561566,
+    "net_gen0100": 1165.4049090248932,
+    "net_gen0110": 1170.0939496798412,
+    "net_gen0120": 1173.7662798881036,
+    "net_gen0130": 1176.700333395403,
+    "net_gen0140": 1179.0867944895851,
+    "net_gen0150": 1181.058802058318,
+    "net_gen0160": 1182.71122011962,
+    "net_gen0170": 1184.1129885526705,
+    "net_gen0180": 1185.315146595082,
+    "net_gen0190": 1186.356135589726,
+    "net_gen0200": 1187.2653684714585,
+    "net_gen0210": 1188.0656768371343,
+    "net_gen0220": 1188.7750183340936,
+    "net_gen0230": 1189.4076879716524
   },
   "history": [
     {
@@ -135,6 +156,1788 @@
       "ratings": {
         "net_gen0020": 1138.7,
         "eisenstein_def": 1338.2
+      }
+    },
+    {
+      "a": "net_gen0030",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 75,
+      "duration": 16.27,
+      "ratings": {
+        "net_gen0030": 1190.1,
+        "eisenstein_def": 1348.2
+      }
+    },
+    {
+      "a": "net_gen0030",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 156,
+      "duration": 49.27,
+      "ratings": {
+        "net_gen0030": 1180.9,
+        "eisenstein_def": 1357.4
+      }
+    },
+    {
+      "a": "net_gen0030",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 75,
+      "duration": 17.32,
+      "ratings": {
+        "net_gen0030": 1172.4,
+        "eisenstein_def": 1365.9
+      }
+    },
+    {
+      "a": "net_gen0030",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 156,
+      "duration": 47.64,
+      "ratings": {
+        "net_gen0030": 1164.5,
+        "eisenstein_def": 1373.8
+      }
+    },
+    {
+      "a": "net_gen0030",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 75,
+      "duration": 16.12,
+      "ratings": {
+        "net_gen0030": 1157.1,
+        "eisenstein_def": 1381.2
+      }
+    },
+    {
+      "a": "net_gen0030",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 156,
+      "duration": 47.35,
+      "ratings": {
+        "net_gen0030": 1150.2,
+        "eisenstein_def": 1388.1
+      }
+    },
+    {
+      "a": "net_gen0040",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 39,
+      "duration": 3.67,
+      "ratings": {
+        "net_gen0040": 1191.9,
+        "eisenstein_def": 1396.2
+      }
+    },
+    {
+      "a": "net_gen0040",
+      "b": "eisenstein_def",
+      "winner": "net_gen0040",
+      "moves": 59,
+      "duration": 6.27,
+      "ratings": {
+        "net_gen0040": 1216.4,
+        "eisenstein_def": 1371.7
+      }
+    },
+    {
+      "a": "net_gen0040",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 39,
+      "duration": 3.44,
+      "ratings": {
+        "net_gen0040": 1207.1,
+        "eisenstein_def": 1381.0
+      }
+    },
+    {
+      "a": "net_gen0040",
+      "b": "eisenstein_def",
+      "winner": "net_gen0040",
+      "moves": 59,
+      "duration": 6.2,
+      "ratings": {
+        "net_gen0040": 1230.5,
+        "eisenstein_def": 1357.6
+      }
+    },
+    {
+      "a": "net_gen0040",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 39,
+      "duration": 3.51,
+      "ratings": {
+        "net_gen0040": 1220.1,
+        "eisenstein_def": 1368.0
+      }
+    },
+    {
+      "a": "net_gen0040",
+      "b": "eisenstein_def",
+      "winner": "net_gen0040",
+      "moves": 59,
+      "duration": 6.76,
+      "ratings": {
+        "net_gen0040": 1242.5,
+        "eisenstein_def": 1345.6
+      }
+    },
+    {
+      "a": "net_gen0050",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 139,
+      "duration": 25.5,
+      "ratings": {
+        "net_gen0050": 1190.3,
+        "eisenstein_def": 1355.2
+      }
+    },
+    {
+      "a": "net_gen0050",
+      "b": "eisenstein_def",
+      "winner": "net_gen0050",
+      "moves": 179,
+      "duration": 41.82,
+      "ratings": {
+        "net_gen0050": 1213.4,
+        "eisenstein_def": 1332.2
+      }
+    },
+    {
+      "a": "net_gen0050",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 139,
+      "duration": 24.87,
+      "ratings": {
+        "net_gen0050": 1202.7,
+        "eisenstein_def": 1342.9
+      }
+    },
+    {
+      "a": "net_gen0050",
+      "b": "eisenstein_def",
+      "winner": "net_gen0050",
+      "moves": 179,
+      "duration": 42.35,
+      "ratings": {
+        "net_gen0050": 1224.8,
+        "eisenstein_def": 1320.8
+      }
+    },
+    {
+      "a": "net_gen0050",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 139,
+      "duration": 23.73,
+      "ratings": {
+        "net_gen0050": 1213.1,
+        "eisenstein_def": 1332.5
+      }
+    },
+    {
+      "a": "net_gen0050",
+      "b": "eisenstein_def",
+      "winner": "net_gen0050",
+      "moves": 179,
+      "duration": 43.9,
+      "ratings": {
+        "net_gen0050": 1234.4,
+        "eisenstein_def": 1311.2
+      }
+    },
+    {
+      "a": "net_gen0060",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 47,
+      "duration": 6.66,
+      "ratings": {
+        "net_gen0060": 1189.0,
+        "eisenstein_def": 1322.2
+      }
+    },
+    {
+      "a": "net_gen0060",
+      "b": "eisenstein_def",
+      "winner": "net_gen0060",
+      "moves": 39,
+      "duration": 5.66,
+      "ratings": {
+        "net_gen0060": 1210.8,
+        "eisenstein_def": 1300.4
+      }
+    },
+    {
+      "a": "net_gen0060",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 47,
+      "duration": 4.74,
+      "ratings": {
+        "net_gen0060": 1198.8,
+        "eisenstein_def": 1312.3
+      }
+    },
+    {
+      "a": "net_gen0060",
+      "b": "eisenstein_def",
+      "winner": "net_gen0060",
+      "moves": 39,
+      "duration": 4.19,
+      "ratings": {
+        "net_gen0060": 1219.9,
+        "eisenstein_def": 1291.3
+      }
+    },
+    {
+      "a": "net_gen0060",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 47,
+      "duration": 4.99,
+      "ratings": {
+        "net_gen0060": 1207.1,
+        "eisenstein_def": 1304.0
+      }
+    },
+    {
+      "a": "net_gen0060",
+      "b": "eisenstein_def",
+      "winner": "net_gen0060",
+      "moves": 39,
+      "duration": 4.11,
+      "ratings": {
+        "net_gen0060": 1227.5,
+        "eisenstein_def": 1283.7
+      }
+    },
+    {
+      "a": "net_gen0070",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 119,
+      "duration": 19.98,
+      "ratings": {
+        "net_gen0070": 1187.8,
+        "eisenstein_def": 1295.9
+      }
+    },
+    {
+      "a": "net_gen0070",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 16,
+      "duration": 1.65,
+      "ratings": {
+        "net_gen0070": 1176.6,
+        "eisenstein_def": 1307.1
+      }
+    },
+    {
+      "a": "net_gen0070",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 119,
+      "duration": 21.75,
+      "ratings": {
+        "net_gen0070": 1166.3,
+        "eisenstein_def": 1317.3
+      }
+    },
+    {
+      "a": "net_gen0070",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 16,
+      "duration": 1.8,
+      "ratings": {
+        "net_gen0070": 1156.9,
+        "eisenstein_def": 1326.8
+      }
+    },
+    {
+      "a": "net_gen0070",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 119,
+      "duration": 23.0,
+      "ratings": {
+        "net_gen0070": 1148.1,
+        "eisenstein_def": 1335.5
+      }
+    },
+    {
+      "a": "net_gen0070",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 16,
+      "duration": 1.54,
+      "ratings": {
+        "net_gen0070": 1140.0,
+        "eisenstein_def": 1343.7
+      }
+    },
+    {
+      "a": "net_gen0080",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.61,
+      "ratings": {
+        "net_gen0080": 1190.3,
+        "eisenstein_def": 1353.4
+      }
+    },
+    {
+      "a": "net_gen0080",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 2.01,
+      "ratings": {
+        "net_gen0080": 1181.3,
+        "eisenstein_def": 1362.4
+      }
+    },
+    {
+      "a": "net_gen0080",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.64,
+      "ratings": {
+        "net_gen0080": 1172.9,
+        "eisenstein_def": 1370.7
+      }
+    },
+    {
+      "a": "net_gen0080",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 2.07,
+      "ratings": {
+        "net_gen0080": 1165.2,
+        "eisenstein_def": 1378.5
+      }
+    },
+    {
+      "a": "net_gen0080",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.63,
+      "ratings": {
+        "net_gen0080": 1157.9,
+        "eisenstein_def": 1385.7
+      }
+    },
+    {
+      "a": "net_gen0080",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 2.28,
+      "ratings": {
+        "net_gen0080": 1151.1,
+        "eisenstein_def": 1392.5
+      }
+    },
+    {
+      "a": "net_gen0090",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.37,
+      "ratings": {
+        "net_gen0090": 1192.1,
+        "eisenstein_def": 1400.5
+      }
+    },
+    {
+      "a": "net_gen0090",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.56,
+      "ratings": {
+        "net_gen0090": 1184.6,
+        "eisenstein_def": 1407.9
+      }
+    },
+    {
+      "a": "net_gen0090",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.21,
+      "ratings": {
+        "net_gen0090": 1177.7,
+        "eisenstein_def": 1414.8
+      }
+    },
+    {
+      "a": "net_gen0090",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.44,
+      "ratings": {
+        "net_gen0090": 1171.2,
+        "eisenstein_def": 1421.3
+      }
+    },
+    {
+      "a": "net_gen0090",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.48,
+      "ratings": {
+        "net_gen0090": 1165.1,
+        "eisenstein_def": 1427.5
+      }
+    },
+    {
+      "a": "net_gen0090",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.7,
+      "ratings": {
+        "net_gen0090": 1159.3,
+        "eisenstein_def": 1433.2
+      }
+    },
+    {
+      "a": "net_gen0100",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.66,
+      "ratings": {
+        "net_gen0100": 1193.4,
+        "eisenstein_def": 1439.9
+      }
+    },
+    {
+      "a": "net_gen0100",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.69,
+      "ratings": {
+        "net_gen0100": 1187.1,
+        "eisenstein_def": 1446.1
+      }
+    },
+    {
+      "a": "net_gen0100",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.32,
+      "ratings": {
+        "net_gen0100": 1181.3,
+        "eisenstein_def": 1452.0
+      }
+    },
+    {
+      "a": "net_gen0100",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.55,
+      "ratings": {
+        "net_gen0100": 1175.7,
+        "eisenstein_def": 1457.6
+      }
+    },
+    {
+      "a": "net_gen0100",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.39,
+      "ratings": {
+        "net_gen0100": 1170.4,
+        "eisenstein_def": 1462.8
+      }
+    },
+    {
+      "a": "net_gen0100",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.55,
+      "ratings": {
+        "net_gen0100": 1165.4,
+        "eisenstein_def": 1467.8
+      }
+    },
+    {
+      "a": "net_gen0110",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.33,
+      "ratings": {
+        "net_gen0110": 1194.4,
+        "eisenstein_def": 1473.5
+      }
+    },
+    {
+      "a": "net_gen0110",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.5,
+      "ratings": {
+        "net_gen0110": 1189.0,
+        "eisenstein_def": 1478.8
+      }
+    },
+    {
+      "a": "net_gen0110",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.26,
+      "ratings": {
+        "net_gen0110": 1183.9,
+        "eisenstein_def": 1483.9
+      }
+    },
+    {
+      "a": "net_gen0110",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.65,
+      "ratings": {
+        "net_gen0110": 1179.1,
+        "eisenstein_def": 1488.7
+      }
+    },
+    {
+      "a": "net_gen0110",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.45,
+      "ratings": {
+        "net_gen0110": 1174.5,
+        "eisenstein_def": 1493.3
+      }
+    },
+    {
+      "a": "net_gen0110",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.69,
+      "ratings": {
+        "net_gen0110": 1170.1,
+        "eisenstein_def": 1497.7
+      }
+    },
+    {
+      "a": "net_gen0120",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.58,
+      "ratings": {
+        "net_gen0120": 1195.1,
+        "eisenstein_def": 1502.6
+      }
+    },
+    {
+      "a": "net_gen0120",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.98,
+      "ratings": {
+        "net_gen0120": 1190.5,
+        "eisenstein_def": 1507.3
+      }
+    },
+    {
+      "a": "net_gen0120",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.78,
+      "ratings": {
+        "net_gen0120": 1186.0,
+        "eisenstein_def": 1511.7
+      }
+    },
+    {
+      "a": "net_gen0120",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 2.31,
+      "ratings": {
+        "net_gen0120": 1181.8,
+        "eisenstein_def": 1516.0
+      }
+    },
+    {
+      "a": "net_gen0120",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.61,
+      "ratings": {
+        "net_gen0120": 1177.7,
+        "eisenstein_def": 1520.1
+      }
+    },
+    {
+      "a": "net_gen0120",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.73,
+      "ratings": {
+        "net_gen0120": 1173.8,
+        "eisenstein_def": 1524.0
+      }
+    },
+    {
+      "a": "net_gen0130",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.42,
+      "ratings": {
+        "net_gen0130": 1195.7,
+        "eisenstein_def": 1528.3
+      }
+    },
+    {
+      "a": "net_gen0130",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.61,
+      "ratings": {
+        "net_gen0130": 1191.6,
+        "eisenstein_def": 1532.4
+      }
+    },
+    {
+      "a": "net_gen0130",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.3,
+      "ratings": {
+        "net_gen0130": 1187.7,
+        "eisenstein_def": 1536.3
+      }
+    },
+    {
+      "a": "net_gen0130",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.74,
+      "ratings": {
+        "net_gen0130": 1183.9,
+        "eisenstein_def": 1540.1
+      }
+    },
+    {
+      "a": "net_gen0130",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.32,
+      "ratings": {
+        "net_gen0130": 1180.2,
+        "eisenstein_def": 1543.8
+      }
+    },
+    {
+      "a": "net_gen0130",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.78,
+      "ratings": {
+        "net_gen0130": 1176.7,
+        "eisenstein_def": 1547.3
+      }
+    },
+    {
+      "a": "net_gen0140",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.34,
+      "ratings": {
+        "net_gen0140": 1196.2,
+        "eisenstein_def": 1551.1
+      }
+    },
+    {
+      "a": "net_gen0140",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.96,
+      "ratings": {
+        "net_gen0140": 1192.5,
+        "eisenstein_def": 1554.8
+      }
+    },
+    {
+      "a": "net_gen0140",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.73,
+      "ratings": {
+        "net_gen0140": 1189.0,
+        "eisenstein_def": 1558.3
+      }
+    },
+    {
+      "a": "net_gen0140",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 2.21,
+      "ratings": {
+        "net_gen0140": 1185.6,
+        "eisenstein_def": 1561.7
+      }
+    },
+    {
+      "a": "net_gen0140",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.77,
+      "ratings": {
+        "net_gen0140": 1182.3,
+        "eisenstein_def": 1565.0
+      }
+    },
+    {
+      "a": "net_gen0140",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 2.25,
+      "ratings": {
+        "net_gen0140": 1179.1,
+        "eisenstein_def": 1568.2
+      }
+    },
+    {
+      "a": "net_gen0150",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.59,
+      "ratings": {
+        "net_gen0150": 1196.6,
+        "eisenstein_def": 1571.6
+      }
+    },
+    {
+      "a": "net_gen0150",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.91,
+      "ratings": {
+        "net_gen0150": 1193.3,
+        "eisenstein_def": 1574.9
+      }
+    },
+    {
+      "a": "net_gen0150",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.53,
+      "ratings": {
+        "net_gen0150": 1190.1,
+        "eisenstein_def": 1578.1
+      }
+    },
+    {
+      "a": "net_gen0150",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 2.19,
+      "ratings": {
+        "net_gen0150": 1187.0,
+        "eisenstein_def": 1581.2
+      }
+    },
+    {
+      "a": "net_gen0150",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.62,
+      "ratings": {
+        "net_gen0150": 1184.0,
+        "eisenstein_def": 1584.2
+      }
+    },
+    {
+      "a": "net_gen0150",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.6,
+      "ratings": {
+        "net_gen0150": 1181.1,
+        "eisenstein_def": 1587.1
+      }
+    },
+    {
+      "a": "net_gen0160",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.42,
+      "ratings": {
+        "net_gen0160": 1196.9,
+        "eisenstein_def": 1590.2
+      }
+    },
+    {
+      "a": "net_gen0160",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.5,
+      "ratings": {
+        "net_gen0160": 1193.9,
+        "eisenstein_def": 1593.3
+      }
+    },
+    {
+      "a": "net_gen0160",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.2,
+      "ratings": {
+        "net_gen0160": 1191.0,
+        "eisenstein_def": 1596.2
+      }
+    },
+    {
+      "a": "net_gen0160",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.56,
+      "ratings": {
+        "net_gen0160": 1188.1,
+        "eisenstein_def": 1599.0
+      }
+    },
+    {
+      "a": "net_gen0160",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.37,
+      "ratings": {
+        "net_gen0160": 1185.4,
+        "eisenstein_def": 1601.8
+      }
+    },
+    {
+      "a": "net_gen0160",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.77,
+      "ratings": {
+        "net_gen0160": 1182.7,
+        "eisenstein_def": 1604.4
+      }
+    },
+    {
+      "a": "net_gen0170",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.67,
+      "ratings": {
+        "net_gen0170": 1197.2,
+        "eisenstein_def": 1607.3
+      }
+    },
+    {
+      "a": "net_gen0170",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.94,
+      "ratings": {
+        "net_gen0170": 1194.4,
+        "eisenstein_def": 1610.0
+      }
+    },
+    {
+      "a": "net_gen0170",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.66,
+      "ratings": {
+        "net_gen0170": 1191.7,
+        "eisenstein_def": 1612.7
+      }
+    },
+    {
+      "a": "net_gen0170",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 2.11,
+      "ratings": {
+        "net_gen0170": 1189.1,
+        "eisenstein_def": 1615.3
+      }
+    },
+    {
+      "a": "net_gen0170",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.82,
+      "ratings": {
+        "net_gen0170": 1186.6,
+        "eisenstein_def": 1617.8
+      }
+    },
+    {
+      "a": "net_gen0170",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.78,
+      "ratings": {
+        "net_gen0170": 1184.1,
+        "eisenstein_def": 1620.3
+      }
+    },
+    {
+      "a": "net_gen0180",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.38,
+      "ratings": {
+        "net_gen0180": 1197.4,
+        "eisenstein_def": 1622.9
+      }
+    },
+    {
+      "a": "net_gen0180",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.62,
+      "ratings": {
+        "net_gen0180": 1194.8,
+        "eisenstein_def": 1625.5
+      }
+    },
+    {
+      "a": "net_gen0180",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.32,
+      "ratings": {
+        "net_gen0180": 1192.4,
+        "eisenstein_def": 1627.9
+      }
+    },
+    {
+      "a": "net_gen0180",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.68,
+      "ratings": {
+        "net_gen0180": 1190.0,
+        "eisenstein_def": 1630.4
+      }
+    },
+    {
+      "a": "net_gen0180",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.36,
+      "ratings": {
+        "net_gen0180": 1187.6,
+        "eisenstein_def": 1632.7
+      }
+    },
+    {
+      "a": "net_gen0180",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.71,
+      "ratings": {
+        "net_gen0180": 1185.3,
+        "eisenstein_def": 1635.0
+      }
+    },
+    {
+      "a": "net_gen0190",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.43,
+      "ratings": {
+        "net_gen0190": 1197.6,
+        "eisenstein_def": 1637.4
+      }
+    },
+    {
+      "a": "net_gen0190",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.56,
+      "ratings": {
+        "net_gen0190": 1195.2,
+        "eisenstein_def": 1639.8
+      }
+    },
+    {
+      "a": "net_gen0190",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.34,
+      "ratings": {
+        "net_gen0190": 1192.9,
+        "eisenstein_def": 1642.1
+      }
+    },
+    {
+      "a": "net_gen0190",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.86,
+      "ratings": {
+        "net_gen0190": 1190.7,
+        "eisenstein_def": 1644.3
+      }
+    },
+    {
+      "a": "net_gen0190",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.3,
+      "ratings": {
+        "net_gen0190": 1188.5,
+        "eisenstein_def": 1646.5
+      }
+    },
+    {
+      "a": "net_gen0190",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.71,
+      "ratings": {
+        "net_gen0190": 1186.4,
+        "eisenstein_def": 1648.6
+      }
+    },
+    {
+      "a": "net_gen0200",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.72,
+      "ratings": {
+        "net_gen0200": 1197.8,
+        "eisenstein_def": 1650.9
+      }
+    },
+    {
+      "a": "net_gen0200",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.99,
+      "ratings": {
+        "net_gen0200": 1195.6,
+        "eisenstein_def": 1653.1
+      }
+    },
+    {
+      "a": "net_gen0200",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.84,
+      "ratings": {
+        "net_gen0200": 1193.4,
+        "eisenstein_def": 1655.2
+      }
+    },
+    {
+      "a": "net_gen0200",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 2.13,
+      "ratings": {
+        "net_gen0200": 1191.3,
+        "eisenstein_def": 1657.3
+      }
+    },
+    {
+      "a": "net_gen0200",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.84,
+      "ratings": {
+        "net_gen0200": 1189.3,
+        "eisenstein_def": 1659.4
+      }
+    },
+    {
+      "a": "net_gen0200",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 2.08,
+      "ratings": {
+        "net_gen0200": 1187.3,
+        "eisenstein_def": 1661.4
+      }
+    },
+    {
+      "a": "net_gen0210",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.42,
+      "ratings": {
+        "net_gen0210": 1197.9,
+        "eisenstein_def": 1663.5
+      }
+    },
+    {
+      "a": "net_gen0210",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.57,
+      "ratings": {
+        "net_gen0210": 1195.8,
+        "eisenstein_def": 1665.5
+      }
+    },
+    {
+      "a": "net_gen0210",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.28,
+      "ratings": {
+        "net_gen0210": 1193.8,
+        "eisenstein_def": 1667.5
+      }
+    },
+    {
+      "a": "net_gen0210",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.59,
+      "ratings": {
+        "net_gen0210": 1191.9,
+        "eisenstein_def": 1669.5
+      }
+    },
+    {
+      "a": "net_gen0210",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.4,
+      "ratings": {
+        "net_gen0210": 1189.9,
+        "eisenstein_def": 1671.4
+      }
+    },
+    {
+      "a": "net_gen0210",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.71,
+      "ratings": {
+        "net_gen0210": 1188.1,
+        "eisenstein_def": 1673.3
+      }
+    },
+    {
+      "a": "net_gen0220",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.54,
+      "ratings": {
+        "net_gen0220": 1198.0,
+        "eisenstein_def": 1675.3
+      }
+    },
+    {
+      "a": "net_gen0220",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.8,
+      "ratings": {
+        "net_gen0220": 1196.1,
+        "eisenstein_def": 1677.2
+      }
+    },
+    {
+      "a": "net_gen0220",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.54,
+      "ratings": {
+        "net_gen0220": 1194.2,
+        "eisenstein_def": 1679.1
+      }
+    },
+    {
+      "a": "net_gen0220",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 2.3,
+      "ratings": {
+        "net_gen0220": 1192.4,
+        "eisenstein_def": 1680.9
+      }
+    },
+    {
+      "a": "net_gen0220",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.79,
+      "ratings": {
+        "net_gen0220": 1190.6,
+        "eisenstein_def": 1682.8
+      }
+    },
+    {
+      "a": "net_gen0220",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 2.23,
+      "ratings": {
+        "net_gen0220": 1188.8,
+        "eisenstein_def": 1684.5
+      }
+    },
+    {
+      "a": "net_gen0230",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.69,
+      "ratings": {
+        "net_gen0230": 1198.1,
+        "eisenstein_def": 1686.4
+      }
+    },
+    {
+      "a": "net_gen0230",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.85,
+      "ratings": {
+        "net_gen0230": 1196.3,
+        "eisenstein_def": 1688.2
+      }
+    },
+    {
+      "a": "net_gen0230",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.43,
+      "ratings": {
+        "net_gen0230": 1194.5,
+        "eisenstein_def": 1690.0
+      }
+    },
+    {
+      "a": "net_gen0230",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.61,
+      "ratings": {
+        "net_gen0230": 1192.8,
+        "eisenstein_def": 1691.7
+      }
+    },
+    {
+      "a": "net_gen0230",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 1.28,
+      "ratings": {
+        "net_gen0230": 1191.1,
+        "eisenstein_def": 1693.4
+      }
+    },
+    {
+      "a": "net_gen0230",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.7,
+      "ratings": {
+        "net_gen0230": 1189.4,
+        "eisenstein_def": 1695.1
+      }
+    },
+    {
+      "a": "net_gen0050",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 54,
+      "duration": 5.97,
+      "ratings": {
+        "net_gen0050": 1232.3,
+        "eisenstein_def": 1697.2
+      }
+    },
+    {
+      "a": "net_gen0050",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 116,
+      "duration": 22.03,
+      "ratings": {
+        "net_gen0050": 1230.2,
+        "eisenstein_def": 1699.3
+      }
+    },
+    {
+      "a": "net_gen0050",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 54,
+      "duration": 7.63,
+      "ratings": {
+        "net_gen0050": 1228.2,
+        "eisenstein_def": 1701.3
+      }
+    },
+    {
+      "a": "net_gen0050",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 116,
+      "duration": 18.46,
+      "ratings": {
+        "net_gen0050": 1226.2,
+        "eisenstein_def": 1703.3
+      }
+    },
+    {
+      "a": "net_gen0050",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 54,
+      "duration": 5.91,
+      "ratings": {
+        "net_gen0050": 1224.3,
+        "eisenstein_def": 1705.2
+      }
+    },
+    {
+      "a": "net_gen0050",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 116,
+      "duration": 18.49,
+      "ratings": {
+        "net_gen0050": 1222.4,
+        "eisenstein_def": 1707.1
+      }
+    },
+    {
+      "a": "net_gen0060",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 27,
+      "duration": 2.34,
+      "ratings": {
+        "net_gen0060": 1225.6,
+        "eisenstein_def": 1709.0
+      }
+    },
+    {
+      "a": "net_gen0060",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 41,
+      "duration": 3.94,
+      "ratings": {
+        "net_gen0060": 1223.7,
+        "eisenstein_def": 1710.9
+      }
+    },
+    {
+      "a": "net_gen0060",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 27,
+      "duration": 2.53,
+      "ratings": {
+        "net_gen0060": 1221.9,
+        "eisenstein_def": 1712.7
+      }
+    },
+    {
+      "a": "net_gen0060",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 41,
+      "duration": 5.18,
+      "ratings": {
+        "net_gen0060": 1220.1,
+        "eisenstein_def": 1714.5
+      }
+    },
+    {
+      "a": "net_gen0060",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 27,
+      "duration": 3.08,
+      "ratings": {
+        "net_gen0060": 1218.3,
+        "eisenstein_def": 1716.2
+      }
+    },
+    {
+      "a": "net_gen0060",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 41,
+      "duration": 4.73,
+      "ratings": {
+        "net_gen0060": 1216.6,
+        "eisenstein_def": 1718.0
+      }
+    },
+    {
+      "a": "net_gen0050",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 0.97,
+      "ratings": {
+        "net_gen0050": 1220.7,
+        "eisenstein_def": 1719.7
+      }
+    },
+    {
+      "a": "net_gen0050",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.13,
+      "ratings": {
+        "net_gen0050": 1219.0,
+        "eisenstein_def": 1721.4
+      }
+    },
+    {
+      "a": "net_gen0050",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 0.81,
+      "ratings": {
+        "net_gen0050": 1217.3,
+        "eisenstein_def": 1723.1
+      }
+    },
+    {
+      "a": "net_gen0050",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.07,
+      "ratings": {
+        "net_gen0050": 1215.6,
+        "eisenstein_def": 1724.8
+      }
+    },
+    {
+      "a": "net_gen0050",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 0.9,
+      "ratings": {
+        "net_gen0050": 1214.0,
+        "eisenstein_def": 1726.4
+      }
+    },
+    {
+      "a": "net_gen0050",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 12,
+      "duration": 1.07,
+      "ratings": {
+        "net_gen0050": 1212.4,
+        "eisenstein_def": 1728.0
+      }
+    },
+    {
+      "a": "net_gen0060",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 27,
+      "duration": 2.44,
+      "ratings": {
+        "net_gen0060": 1215.0,
+        "eisenstein_def": 1729.6
+      }
+    },
+    {
+      "a": "net_gen0060",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 20,
+      "duration": 1.77,
+      "ratings": {
+        "net_gen0060": 1213.4,
+        "eisenstein_def": 1731.1
+      }
+    },
+    {
+      "a": "net_gen0060",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 27,
+      "duration": 2.45,
+      "ratings": {
+        "net_gen0060": 1211.9,
+        "eisenstein_def": 1732.7
+      }
+    },
+    {
+      "a": "net_gen0060",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 20,
+      "duration": 1.74,
+      "ratings": {
+        "net_gen0060": 1210.4,
+        "eisenstein_def": 1734.2
+      }
+    },
+    {
+      "a": "net_gen0060",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 27,
+      "duration": 2.51,
+      "ratings": {
+        "net_gen0060": 1208.9,
+        "eisenstein_def": 1735.7
+      }
+    },
+    {
+      "a": "net_gen0060",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 20,
+      "duration": 1.83,
+      "ratings": {
+        "net_gen0060": 1207.4,
+        "eisenstein_def": 1737.2
+      }
+    },
+    {
+      "a": "net_gen0050",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 0.88,
+      "ratings": {
+        "net_gen0050": 1210.9,
+        "eisenstein_def": 1738.7
+      }
+    },
+    {
+      "a": "net_gen0050",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 25,
+      "duration": 2.11,
+      "ratings": {
+        "net_gen0050": 1209.5,
+        "eisenstein_def": 1740.1
+      }
+    },
+    {
+      "a": "net_gen0050",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 0.72,
+      "ratings": {
+        "net_gen0050": 1208.0,
+        "eisenstein_def": 1741.6
+      }
+    },
+    {
+      "a": "net_gen0050",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 25,
+      "duration": 2.15,
+      "ratings": {
+        "net_gen0050": 1206.6,
+        "eisenstein_def": 1743.0
+      }
+    },
+    {
+      "a": "net_gen0050",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 11,
+      "duration": 0.73,
+      "ratings": {
+        "net_gen0050": 1205.2,
+        "eisenstein_def": 1744.4
+      }
+    },
+    {
+      "a": "net_gen0050",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 25,
+      "duration": 2.27,
+      "ratings": {
+        "net_gen0050": 1203.8,
+        "eisenstein_def": 1745.8
+      }
+    },
+    {
+      "a": "net_gen0060",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 34,
+      "duration": 3.29,
+      "ratings": {
+        "net_gen0060": 1206.0,
+        "eisenstein_def": 1747.1
+      }
+    },
+    {
+      "a": "net_gen0060",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 48,
+      "duration": 5.54,
+      "ratings": {
+        "net_gen0060": 1204.7,
+        "eisenstein_def": 1748.5
+      }
+    },
+    {
+      "a": "net_gen0060",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 34,
+      "duration": 3.37,
+      "ratings": {
+        "net_gen0060": 1203.3,
+        "eisenstein_def": 1749.8
+      }
+    },
+    {
+      "a": "net_gen0060",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 48,
+      "duration": 5.21,
+      "ratings": {
+        "net_gen0060": 1202.0,
+        "eisenstein_def": 1751.2
+      }
+    },
+    {
+      "a": "net_gen0060",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 34,
+      "duration": 3.41,
+      "ratings": {
+        "net_gen0060": 1200.7,
+        "eisenstein_def": 1752.5
+      }
+    },
+    {
+      "a": "net_gen0060",
+      "b": "eisenstein_def",
+      "winner": "eisenstein_def",
+      "moves": 48,
+      "duration": 5.55,
+      "ratings": {
+        "net_gen0060": 1199.4,
+        "eisenstein_def": 1753.7
       }
     }
   ]

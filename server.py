@@ -179,6 +179,10 @@ threading.Thread(target=_metrics_watcher, daemon=True, name="metrics_watcher").s
 def root():
     return FileResponse("dashboard.html")
 
+@app.get("/mobile")
+def mobile():
+    return FileResponse("mobile.html")
+
 
 @app.get("/api/status")
 def api_status():

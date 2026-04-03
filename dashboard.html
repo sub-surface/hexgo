@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>HexGo</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gif.js@0.2.0/dist/gif.js"></script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
@@ -191,15 +192,15 @@ input[type=range] { accent-color: var(--accent); width: 100%; }
   <!-- row 2: charts 2×4 -->
   <div class="train-charts">
     <div class="panel" style="flex:1; display:flex; flex-direction:column;">
-      <div class="panel-hd">TOTAL LOSS</div>
+      <div class="panel-hd" id="hd-loss">TOTAL LOSS</div>
       <div class="panel-body chart-wrap" style="padding:6px;"><canvas id="chart-loss"></canvas></div>
     </div>
     <div class="panel" style="flex:1; display:flex; flex-direction:column;">
-      <div class="panel-hd">VALUE LOSS</div>
+      <div class="panel-hd" id="hd-lossv">VALUE LOSS</div>
       <div class="panel-body chart-wrap" style="padding:6px;"><canvas id="chart-lossv"></canvas></div>
     </div>
     <div class="panel" style="flex:1; display:flex; flex-direction:column;">
-      <div class="panel-hd">POLICY LOSS</div>
+      <div class="panel-hd" id="hd-lossp">POLICY LOSS</div>
       <div class="panel-body chart-wrap" style="padding:6px;"><canvas id="chart-lossp"></canvas></div>
     </div>
     <div class="panel" style="flex:1; display:flex; flex-direction:column;">
@@ -268,6 +269,7 @@ input[type=range] { accent-color: var(--accent); width: 100%; }
           <button onclick="replayStep(1)">▶</button>
           <button onclick="replayReset()">↺</button>
         </div>
+        <button id="r-gifbtn" onclick="replayExportGif()" style="margin-top:8px;width:100%;padding:6px;font-size:11px;">Download GIF</button>
       </div>
     </div>
   </div>
@@ -383,6 +385,25 @@ function rebuildCharts() {
   setChart(charts.loss,  'avg_loss');
   setChart(charts.lossv, 'avg_loss_v');
   setChart(charts.lossp, 'avg_loss_p');
+
+  // Update headers with derivative (delta from previous gen)
+  function lossDerivative(key) {
+    const n = _allMetrics.length;
+    if (n < 2) return null;
+    const v0 = _allMetrics[n - 2][key], v1 = _allMetrics[n - 1][key];
+    if (v0 == null || v1 == null) return null;
+    return v1 - v0;
+  }
+  function derivTag(key) {
+    const d = lossDerivative(key);
+    if (d == null) return '';
+    const sign = d >= 0 ? '+' : '';
+    const color = d <= 0 ? '#3fb950' : '#e06060';
+    return ` <span style="color:${color};font-size:9px;margin-left:6px;">${sign}${d.toFixed(4)}/gen</span>`;
+  }
+  document.getElementById('hd-loss').innerHTML = 'TOTAL LOSS' + derivTag('avg_loss');
+  document.getElementById('hd-lossv').innerHTML = 'VALUE LOSS' + derivTag('avg_loss_v');
+  document.getElementById('hd-lossp').innerHTML = 'POLICY LOSS' + derivTag('avg_loss_p');
   setChart(charts.ent,   'avg_ent');
   setChart(charts.gps,   'games_per_s');
   setChart(charts.spt,   'sp_time_s');
@@ -868,6 +889,48 @@ function replayStopPlay() {
   _replayPlaying = false;
   document.getElementById('r-playbtn').textContent = '▶▶';
   if (_replayTimer) { clearTimeout(_replayTimer); _replayTimer = null; }
+}
+
+function replayExportGif() {
+  if (!_replayData || !_replayData.moves.length) return;
+  const btn = document.getElementById('r-gifbtn');
+  btn.disabled = true; btn.textContent = 'Rendering...';
+  replayStopPlay();
+
+  const savedIdx = _replayIdx;
+  const canvas = document.getElementById('replay-canvas');
+  const w = canvas.width, h = canvas.height;
+  const delay = parseInt(document.getElementById('r-speed').value) || 300;
+
+  const gif = new GIF({ workers: 2, quality: 10, width: w, height: h,
+    workerScript: 'https://cdn.jsdelivr.net/npm/gif.js@0.2.0/dist/gif.worker.js' });
+
+  // Render each move as a frame
+  const total = _replayData.moves.length;
+  for (let i = 0; i <= total; i++) {
+    replayJump(i);
+    gif.addFrame(canvas, { copy: true, delay: i === total ? delay * 3 : delay });
+  }
+
+  gif.on('finished', blob => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const label = _replayData.label || 'replay';
+    const gen = _replayData.gen != null ? `gen${String(_replayData.gen).padStart(4,'0')}` : '';
+    a.download = `hexgo_${label}_${gen}.gif`;
+    a.click();
+    URL.revokeObjectURL(url);
+    btn.disabled = false; btn.textContent = 'Download GIF';
+  });
+
+  gif.on('error', () => {
+    btn.disabled = false; btn.textContent = 'Download GIF';
+  });
+
+  // Restore original position
+  replayJump(savedIdx);
+  gif.render();
 }
 
 // ── Hex renderer ───────────────────────────────────────────────────────────

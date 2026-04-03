@@ -62,23 +62,34 @@ CHECKPOINT_DIR.mkdir(exist_ok=True)
 REPLAY_DIR = Path("replays")
 REPLAY_DIR.mkdir(exist_ok=True)
 
-BUFFER_CAP   = 200_000  # scaled up for RTX 5070 Ti (16GB VRAM)
+BUFFER_CAP   = 100_000  # smaller buffer flushes bad data faster
 BATCH_SIZE   = 512      # large batch to saturate GPU during training
-LR           = CFG["LR"]
-WEIGHT_DECAY = CFG["WEIGHT_DECAY"]
+LR           = 2e-4     # conservative LR for stable self-play training
+WEIGHT_DECAY = 3e-5     # lighter regularization for small network
 
 # Batched self-play settings
 TOP_K        = 24      # wider branching for 400-sim deep search
 SIMS_MIN     = 16      # min sims early in training
 SIMS_RAMP    = 20      # generations to ramp from SIMS_MIN to target
 MAX_MOVES_MIN = 30     # max moves per game early in training
-MAX_MOVES_MAX = 200    # longer games for richer mid/late-game training signal
+MAX_MOVES_MAX = 120    # cap to prevent scattered-play gens from dragging
 MAX_MOVES_RAMP = 20    # generations to ramp
 DECISIVE_DIR  = Path("replays/decisive")
 DECISIVE_DIR.mkdir(parents=True, exist_ok=True)
 TD_LAMBDA     = 0.8       # temporal difference lambda for value targets
 RANDOM_OPENING = 0        # disabled for now — Rust batched self-play handles opening diversity via Dirichlet
 RANDOM_OPENING_FRAC = 0.5 # fraction of games that get random openings
+ZOI_MARGIN_MIN  = 4       # tight ZOI forces compact play (4 = can always block a 6-chain)
+ZOI_MARGIN_MAX  = 5       # full ZOI margin once network learns tactics
+ZOI_MARGIN_RAMP = 30      # generations to ramp from MIN to MAX
+ZOI_LOOKBACK    = 16      # recent moves defining ZOI focus
+
+
+def _curriculum_zoi(gen):
+    """Linearly ramp ZOI margin from MIN to MAX over RAMP generations."""
+    if gen >= ZOI_MARGIN_RAMP:
+        return ZOI_MARGIN_MAX
+    return ZOI_MARGIN_MIN + (ZOI_MARGIN_MAX - ZOI_MARGIN_MIN) * gen // ZOI_MARGIN_RAMP
 
 
 def _curriculum_sims(gen, target):
@@ -364,6 +375,22 @@ def batched_self_play(net, n_games, sims, max_moves, top_k, device):
     return results
 
 
+def _scalar_to_wdl(z: np.ndarray) -> np.ndarray:
+    """Convert scalar value targets in [-1,1] to soft WDL distributions [N, 3].
+    v >= 0: [v, 1-v, 0]  (win/draw blend)
+    v <  0: [0, 1+v, -v] (draw/loss blend)
+    """
+    z = np.clip(z, -1.0, 1.0)
+    wdl = np.zeros((len(z), 3), dtype=np.float32)
+    pos = z >= 0
+    wdl[pos, 0] = z[pos]         # P(win)
+    wdl[pos, 1] = 1.0 - z[pos]   # P(draw)
+    neg = ~pos
+    wdl[neg, 1] = 1.0 + z[neg]   # P(draw)
+    wdl[neg, 2] = -z[neg]        # P(loss)
+    return wdl
+
+
 # -- Training step (fully vectorized) -----------------------------------------
 
 def train_batch(net, optimizer, scaler, buffer):
@@ -395,8 +422,10 @@ def train_batch(net, optimizer, scaler, buffer):
     optimizer.zero_grad()
 
     f = net.trunk(boards)
-    val = net.value(f)
-    loss_v = F.mse_loss(val, z_targets)
+    wdl_logits = net.value_wdl(f)                          # [B, 3]
+    wdl_targets = torch.from_numpy(_scalar_to_wdl(z_np)).to(DEVICE)
+    loss_v = -(wdl_targets * F.log_softmax(wdl_logits, dim=-1)).sum(dim=-1).mean()
+    val = F.softmax(wdl_logits.detach(), dim=-1)[:, 0] - F.softmax(wdl_logits.detach(), dim=-1)[:, 2]
 
     # Spatial masked cross-entropy policy loss
     policy_targets = torch.tensor(
@@ -465,8 +494,8 @@ def train_batch(net, optimizer, scaler, buffer):
 
     loss = CFG.get("VALUE_LOSS_WEIGHT", 2.0) * loss_v + loss_p + loss_aux + unc_w * loss_unc
 
-    if torch.isnan(loss):
-        log.warning("NaN loss detected! Skipping batch.")
+    if torch.isnan(loss) or loss.item() > 100.0:
+        log.warning("Bad loss (%.2f) detected! Skipping batch.", loss.item())
         return None
 
     loss.backward()
@@ -497,7 +526,15 @@ def load_latest(net):
     if path.exists():
         try:
             target = net._orig_mod if hasattr(net, "_orig_mod") else net
-            target.load_state_dict(torch.load(path, map_location=DEVICE))
+            state = torch.load(path, map_location=DEVICE)
+            # Handle migration from old 1-output value head to WDL 3-output
+            target_state = target.state_dict()
+            for key in list(state.keys()):
+                if key in target_state and state[key].shape != target_state[key].shape:
+                    log.info("Shape mismatch for %s (%s vs %s), reinitializing",
+                             key, state[key].shape, target_state[key].shape)
+                    del state[key]
+            target.load_state_dict(state, strict=False)
             log.info("Loaded %s", path)
             nums = [int(p.stem.split("gen")[1]) for p in CHECKPOINT_DIR.glob("net_gen*.pt")]
             return max(nums) if nums else 0
@@ -732,6 +769,9 @@ def train(n_gens=50, sims=100, games_per_gen=64):
         cosine_progress = (gen_idx - WARMUP_GENS) / max(n_gens - WARMUP_GENS, 1)
         return 0.01 + 0.99 * 0.5 * (1 + math.cos(math.pi * cosine_progress))
     scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+    # Fast-forward scheduler to current gen so LR doesn't reset on restart
+    for _ in range(start_gen):
+        scheduler.step()
     buffer = deque(maxlen=BUFFER_CAP)
     load_buffer(buffer)
 
@@ -741,6 +781,7 @@ def train(n_gens=50, sims=100, games_per_gen=64):
 
         cur_sims = _curriculum_sims(gen, sims)
         cur_max_moves = _curriculum_max_moves(gen)
+        cur_zoi = _curriculum_zoi(gen)
 
         # --- Batched self-play ---
         t_sp = time.perf_counter()
@@ -754,6 +795,8 @@ def train(n_gens=50, sims=100, games_per_gen=64):
                 temp_horizon=CFG.get("TEMP_HORIZON", 40),
                 random_opening=RANDOM_OPENING,
                 random_opening_frac=RANDOM_OPENING_FRAC,
+                zoi_margin=cur_zoi,
+                zoi_lookback=ZOI_LOOKBACK,
             )
             results = _postprocess_rust_results(raw)
         else:

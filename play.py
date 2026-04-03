@@ -831,9 +831,7 @@ class HexPlayGUI:
                 if getattr(self.net, '_is_eisenstein', False):
                     move = self.net.choose_move(self.game)
                 else:
-                    move = mcts_with_net(self.game, self.net, self.sims,
-                                         dirichlet_eps=0.0, top_k=8,
-                                         policy_temp=0.5, cpuct_override=0.8)
+                    move = mcts_with_net(self.game, self.net, self.sims)
                 self.game.make(*move)
                 self.last_move = move
 
@@ -1311,10 +1309,7 @@ class HexPlayGUI:
                 if getattr(net, '_is_eisenstein', False):
                     move = net.choose_move(self.game)
                 else:
-                    move = mcts_with_net(self.game, net, self.match_sims,
-                                         dirichlet_eps=0.1, top_k=12,
-                                         policy_temp=0.7, cpuct_override=1.0,
-                                         move_temp=0.5)
+                    move = mcts_with_net(self.game, net, self.match_sims)
                 self.root.after(0, self._stop_thinking_anim)
                 self.root.after(0, lambda m=move: self._match_apply(m))
             except Exception as e:

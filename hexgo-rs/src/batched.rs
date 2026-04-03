@@ -107,7 +107,8 @@ fn call_batch_eval<'py>(
 #[pyo3(signature = (eval_fn, n_games, sims, max_moves, top_k=24,
                     c_puct=2.0, fpu_reduction=0.2,
                     dirichlet_alpha=0.10, dirichlet_eps=0.25,
-                    temp_horizon=40, random_opening=6, random_opening_frac=0.5))]
+                    temp_horizon=40, random_opening=6, random_opening_frac=0.5,
+                    zoi_margin=0, zoi_lookback=16))]
 pub fn batched_self_play(
     py: Python<'_>,
     eval_fn: &Bound<'_, PyAny>,
@@ -122,6 +123,8 @@ pub fn batched_self_play(
     temp_horizon: usize,
     random_opening: usize,
     random_opening_frac: f64,
+    zoi_margin: i16,
+    zoi_lookback: usize,
 ) -> PyResult<Vec<GameTrainingResult>> {
     let mut states: Vec<GameState> = (0..n_games)
         .map(|_| GameState {
@@ -212,7 +215,7 @@ pub fn batched_self_play(
                     let logit_slice = &root_logits[logit_offset..logit_offset + PLANE];
 
                     let move_logits =
-                        top_k_from_logit_map(logit_slice, &states[i].game, origin.0, origin.1, top_k);
+                        top_k_from_logit_map_zoi(logit_slice, &states[i].game, origin.0, origin.1, top_k, zoi_margin, zoi_lookback);
                     if move_logits.is_empty() {
                         return None;
                     }
@@ -357,8 +360,8 @@ pub fn batched_self_play(
                     let logit_offset = ej * PLANE;
                     let logit_slice = &eval_logits[logit_offset..logit_offset + PLANE];
 
-                    let move_logits = top_k_from_logit_map(
-                        logit_slice, &state.game, origin.0, origin.1, top_k,
+                    let move_logits = top_k_from_logit_map_zoi(
+                        logit_slice, &state.game, origin.0, origin.1, top_k, zoi_margin, zoi_lookback,
                     );
 
                     if !move_logits.is_empty() {
@@ -422,6 +425,15 @@ pub fn batched_self_play(
                     state.game.unmake_move();
                 }
                 state.arena.backprop(leaf.node, v);
+            }
+        }
+
+        // ── Update root value estimates with post-search values ─────────
+        for &i in &still_active {
+            let state = &mut states[i];
+            let root_node = state.arena.get(state.root);
+            if root_node.visits > 0 {
+                state.root_value_est = root_node.value / root_node.visits as f32;
             }
         }
 

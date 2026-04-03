@@ -175,8 +175,30 @@ pub fn top_k_from_logit_map(
     or_: i16,
     k: usize,
 ) -> Vec<(Coord, f32)> {
+    top_k_from_logit_map_zoi(logit_map, game, oq, or_, k, 0, 16)
+}
+
+/// Like top_k_from_logit_map but with optional ZOI filtering.
+/// If zoi_margin > 0, only considers moves within zoi_margin hex steps of recent play.
+pub fn top_k_from_logit_map_zoi(
+    logit_map: &[f32], // flat S*S
+    game: &HexGame,
+    oq: i16,
+    or_: i16,
+    k: usize,
+    zoi_margin: i16,
+    zoi_lookback: usize,
+) -> Vec<(Coord, f32)> {
     let board = game.board_ref();
     let half = BOARD_SIZE as i16 / 2;
+
+    // Build ZOI set if margin > 0
+    let zoi_set: Option<std::collections::HashSet<Coord>> = if zoi_margin > 0 {
+        let zoi = game.zoi_moves(zoi_margin, zoi_lookback);
+        Some(zoi.into_iter().collect())
+    } else {
+        None
+    };
 
     // Collect all (index, logit) and partial sort
     let n_top = (k * 8).min(PLANE);
@@ -195,10 +217,20 @@ pub fn top_k_from_logit_map(
         if board.contains_key(&(q, r)) {
             continue;
         }
+        // ZOI filter: skip moves outside the zone of interest
+        if let Some(ref zoi) = zoi_set {
+            if !zoi.contains(&(q, r)) {
+                continue;
+            }
+        }
         result.push(((q, r), logit));
         if result.len() >= k {
             break;
         }
+    }
+    // Fallback: if ZOI was too restrictive, retry without it
+    if result.len() < 3 && zoi_set.is_some() {
+        return top_k_from_logit_map_zoi(logit_map, game, oq, or_, k, 0, 0);
     }
     result
 }

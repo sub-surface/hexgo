@@ -147,13 +147,14 @@ CFG = {
     "AUX_LOSS_OWN": 0.1,         # ownership head loss weight
     "AUX_LOSS_THREAT": 0.1,      # threat head loss weight
     "UNC_LOSS_WEIGHT": 0.05,     # value uncertainty head (Gaussian NLL) loss weight
-    "VALUE_LOSS_WEIGHT": 1.0,    # multiplier on MSE value loss
+    "VALUE_LOSS_WEIGHT": 1.0,    # multiplier on value loss (now WDL cross-entropy)
     "ENTROPY_REG": 0.01,         # policy entropy regularization bonus weight
 }
 ```
 
-**train.py overrides:** `BATCH_SIZE=512`, `SIMS_MIN=16`, `SIMS_RAMP=20` (gens to reach target sims),
-`TOP_K=24`, `BUFFER_CAP=200_000`, `MAX_MOVES_MAX=200`, training batches capped at 150/gen.
+**train.py overrides:** `BATCH_SIZE=512`, `LR=2e-4`, `WEIGHT_DECAY=3e-5`, `SIMS_MIN=16`, `SIMS_RAMP=20`,
+`TOP_K=24`, `BUFFER_CAP=100_000`, `MAX_MOVES_MAX=120`, training batches capped at 150/gen.
+ZOI curriculum: `ZOI_MARGIN_MIN=4` → `ZOI_MARGIN_MAX=5` over 30 gens (forces compact play early).
 
 `CPUCT` and `TRUNK_*` are loaded at module import time — process restart required to change them.
 
@@ -170,16 +171,15 @@ autotune pipeline end-to-end, Rust/Python encoding parity.
 
 ---
 
-## Current status (2026-04-02)
+## Current status (2026-04-03)
 
-All confirmed correctness bugs (FIX-1 through FIX-10) are resolved. Training pipeline
-running on RTX 5070 Ti (16GB VRAM) with Rust batched self-play. ~2.5 min/gen at 200 sims.
+Training pipeline running on RTX 5070 Ti (16GB VRAM) with Rust batched self-play.
+~1.5-2.5 min/gen at 200 sims with ZOI curriculum. All correctness bugs resolved.
 
 **Completed 2026-03-30 (session 2):**
 - `CPUCT` raised 1.0 → 2.0; `DIRICHLET_ALPHA` reduced 0.3 → 0.10
 - Recency-weighted replay buffer: 75% recent half / 25% uniform per batch
 - Auxiliary heads: ownership + threat (thin 1×1 convs off trunk)
-- `VALUE_LOSS_WEIGHT=2.0` → later tuned to 1.0
 - Per-component loss tracking + move accuracy metric in `metrics.jsonl`
 
 **Completed 2026-03-31 (session 3):**
@@ -192,17 +192,35 @@ running on RTX 5070 Ti (16GB VRAM) with Rust batched self-play. ~2.5 min/gen at 
   - Lockstep MCTS with Python GPU eval callback; Rayon parallel board encoding
   - Board encoding ported to Rust (`encode.rs`): full 17ch + fast variant (skips axis-chains)
 - Replay buffer switched from monolithic `.npz` to separate `.npy` files with mmap loading
-  (fixes OOM on buffer load when CUDA is active)
 - Buffer saved every generation (was every 5)
-- Training batches capped at 150/gen (prevents training time blowup at large buffer sizes)
-- Sims reduced from 400 → 200 for early training (diminishing returns on random network)
-- Removed Eisenstein bias from `play.py` MCTS calls (proximity_bias, chain_bonus)
-- torch.compile disabled (interferes with Rust eval callback)
-- Autocast disabled in training (CA-init weights overflow in fp16); enabled in eval callbacks
+- Training batches capped at 150/gen
+- Removed Eisenstein bias from `play.py` MCTS calls
+- torch.compile disabled; autocast disabled in training (CA-init overflow)
 - Overlapped training reverted (cuDNN thread-safety issues)
 
-**Remaining open items:**
-- G-CNN full D6 equivariance (deferred — major rewrite)
-- MuZero reanalysis (deferred — compute cost)
+**Completed 2026-04-03 (session 5):**
+- **WDL value head**: Replaced single MSE scalar with 3-class softmax (win/draw/loss)
+  trained with cross-entropy. Bounded by design — eliminates value head explosions.
+  Scalar value derived as P(win) - P(loss) for MCTS compatibility.
+- **Post-search value estimate**: Rust batched self-play now stores the MCTS root value
+  (avg child value after all sims) instead of pre-search net prediction. Fixes stale
+  TD-lambda bootstrap targets.
+- **ZOI curriculum for self-play**: ZOI_MARGIN ramps from 4→5 over 30 gens. Forces
+  compact, tactical play early (prevents scattered-play plateau). Integrated into Rust
+  via `top_k_from_logit_map_zoi()` with fallback if ZOI is too restrictive.
+- **LR reduced to 2e-4** (was 5e-4, originally 1e-3). Weight decay reduced to 3e-5.
+- **Loss spike guard**: Batches with loss > 100 skipped before backward pass.
+- **LR scheduler resume**: Fast-forwards on restart to prevent warmup reset.
+- **AutoResearch infrastructure**: Karpathy-style autonomous experiment loop in
+  `autoresearch/` — program.md, run_trial.py, results.tsv, experiments_queue.md.
+  9 prioritized experiments (Tier 2 + 3) ready to run once WDL head converges.
+- **Mobile monitoring page** at `/mobile` — real-time metrics, charts, ELO, log tail.
+- **Dashboard enhancements**: Loss derivative in chart headers, GIF export for replays.
 
-See `docs/ASSESSMENT.md` and `docs/ROADMAP.md` for full details.
+**Remaining open items:**
+- AutoResearch loop activation (pending WDL convergence)
+- Tier 2 experiments: TOP_K curriculum, cosine warm restarts, buffer 300K, ELO eval 12 games
+- Tier 3: short-term value aux targets, EMA weights, lightweight Reanalyze
+- G-CNN full D6 equivariance (deferred — major rewrite)
+
+See `docs/ASSESSMENT.md`, `docs/ROADMAP.md`, and `docs/TRAINING_RESEARCH.md` for details.
