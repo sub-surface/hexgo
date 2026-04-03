@@ -22,7 +22,7 @@ CFG = {
     "TRUNK_BLOCKS": 6,
     "TRUNK_CHANNELS": 128,
     "WEIGHT_INIT": 'ca',
-    "VALUE_LOSS_WEIGHT": 1.0,
+    "VALUE_LOSS_WEIGHT": 2.0,    # doubled to push value head past plateau
     "ENTROPY_REG": 0.01,
     "AUX_LOSS_OWN": 0.1,
     "AUX_LOSS_THREAT": 0.1,
