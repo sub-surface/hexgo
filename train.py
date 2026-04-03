@@ -878,20 +878,19 @@ def train(n_gens=50, sims=100, games_per_gen=64):
         with open("metrics.jsonl", "a", encoding="utf-8") as mf:
             mf.write(json.dumps(_metrics) + "\n")
 
-        # Lightweight ELO eval every 10 generations
+        # ELO eval every 10 generations (24 games for reliability)
         if gen % 10 == 0:
             try:
-                elo_tracker = ELO()
-                net_agent = NetAgent(net, sims=50, name=f"net_gen{gen:04d}")
+                net_agent = NetAgent(net, sims=100, name="net",
+                                    dirichlet_eps=0.15, dirichlet_alpha=0.10)
                 eis_agent = EisensteinGreedyAgent("eisenstein_def", defensive=True)
-                elo_result = run_match(net_agent, eis_agent, n_games=6, elo=elo_tracker, verbose=False)
-                net_rating = elo_tracker.rating(net_agent.name)
-                eis_rating = elo_tracker.rating(eis_agent.name)
-                net_wins = elo_result.get(f"wins_{net_agent.name}", 0)
-                log.info("  ELO eval: net=%d  eis=%d  (net won %d/6)",
-                         net_rating, eis_rating, net_wins)
-                _metrics["elo_net"] = round(net_rating, 1)
-                _metrics["elo_eis"] = round(eis_rating, 1)
+                elo_tracker = ELO()
+                result = run_match(net_agent, eis_agent, n_games=24,
+                                   elo=elo_tracker, verbose=False)
+                net_wins = result.get("wins_net", 0)
+                log.info("  ELO eval: net won %d/24 vs Eisenstein", net_wins)
+                _metrics["eval_eis_wins"] = net_wins
+                _metrics["eval_eis_total"] = 24
                 lines = Path("metrics.jsonl").read_text().rstrip().split("\n")
                 lines[-1] = json.dumps(_metrics)
                 Path("metrics.jsonl").write_text("\n".join(lines) + "\n")
