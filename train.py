@@ -881,8 +881,7 @@ def train(n_gens=50, sims=100, games_per_gen=64):
         # ELO eval every 10 generations (24 games for reliability)
         if gen % 10 == 0:
             try:
-                net_agent = NetAgent(net, sims=100, name="net",
-                                    dirichlet_eps=0.15, dirichlet_alpha=0.10)
+                net_agent = NetAgent(net, sims=100, name="net")
                 eis_agent = EisensteinGreedyAgent("eisenstein_def", defensive=True)
                 elo_tracker = ELO()
                 result = run_match(net_agent, eis_agent, n_games=24,
