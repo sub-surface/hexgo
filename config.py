@@ -24,7 +24,7 @@ CFG = {
     "WEIGHT_INIT": 'ca',
     "VALUE_LOSS_WEIGHT": 1.0,
     "ENTROPY_REG": 0.01,
-    "AUX_LOSS_OWN": 0.1,
-    "AUX_LOSS_THREAT": 0.1,
-    "UNC_LOSS_WEIGHT": 0.05,    # conservative for fresh start
+    "AUX_LOSS_OWN": 0.0,         # disabled — free trunk capacity for value+policy
+    "AUX_LOSS_THREAT": 0.0,      # disabled
+    "UNC_LOSS_WEIGHT": 0.0,      # disabled
 }
