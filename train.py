@@ -68,7 +68,7 @@ LR           = 2e-4     # conservative LR for stable self-play training
 WEIGHT_DECAY = 3e-5     # lighter regularization for small network
 
 # Batched self-play settings
-TOP_K        = 24      # wider branching for 400-sim deep search
+TOP_K        = 48      # wider branching — ramp down to 24 via curriculum
 SIMS_MIN     = 16      # min sims early in training
 SIMS_RAMP    = 20      # generations to ramp from SIMS_MIN to target
 MAX_MOVES_MIN = 30     # max moves per game early in training
@@ -104,6 +104,17 @@ def _curriculum_max_moves(gen):
     if gen >= MAX_MOVES_RAMP:
         return MAX_MOVES_MAX
     return int(MAX_MOVES_MIN + (MAX_MOVES_MAX - MAX_MOVES_MIN) * gen / MAX_MOVES_RAMP)
+
+
+TOP_K_MIN    = 24     # final (tight) TOP_K
+TOP_K_RAMP   = 10     # gens to ramp from TOP_K down to TOP_K_MIN
+
+def _curriculum_top_k(gen, start_gen):
+    """Linearly ramp TOP_K from wide (TOP_K) to tight (TOP_K_MIN) over RAMP gens."""
+    elapsed = gen - start_gen
+    if elapsed >= TOP_K_RAMP:
+        return TOP_K_MIN
+    return int(TOP_K - (TOP_K - TOP_K_MIN) * elapsed / TOP_K_RAMP)
 
 
 # -- Game recording -----------------------------------------------------------
@@ -778,6 +789,7 @@ def train(n_gens=50, sims=100, games_per_gen=64):
         cur_sims = _curriculum_sims(gen, sims)
         cur_max_moves = _curriculum_max_moves(gen)
         cur_zoi = _curriculum_zoi(gen)
+        cur_top_k = _curriculum_top_k(gen, start_gen)
 
         # --- Batched self-play ---
         t_sp = time.perf_counter()
@@ -785,7 +797,7 @@ def train(n_gens=50, sims=100, games_per_gen=64):
             eval_fn = make_eval_fn(net, DEVICE)
             raw = rust_batched_self_play(
                 eval_fn, games_per_gen, cur_sims, cur_max_moves,
-                top_k=TOP_K, c_puct=CFG["CPUCT"], fpu_reduction=0.2,
+                top_k=cur_top_k, c_puct=CFG["CPUCT"], fpu_reduction=0.2,
                 dirichlet_alpha=CFG.get("DIRICHLET_ALPHA", 0.10),
                 dirichlet_eps=CFG.get("DIRICHLET_EPS", 0.25),
                 temp_horizon=CFG.get("TEMP_HORIZON", 40),
