@@ -427,10 +427,11 @@ class HexNet(nn.Module):
     Value head:   trunk → conv 1×1 → flatten → FC → tanh scalar
     Policy head:  (trunk_features, move_plane) → conv 1×1 → flatten → FC → scalar
     """
-    def __init__(self, hidden: int = HIDDEN, n_blocks: int = N_BLOCKS):
+    def __init__(self, hidden: int = HIDDEN, n_blocks: int = N_BLOCKS, wdl: bool = True):
         super().__init__()
         self.hidden = hidden
         self.n_blocks = n_blocks
+        self.wdl = wdl
 
         # Trunk — HexConv2d in stem ensures hex geometry prior from the very first layer
         self.stem = nn.Sequential(
@@ -450,10 +451,11 @@ class HexNet(nn.Module):
             nn.BatchNorm2d(1),
             nn.ReLU(),
         )
+        v_out = 3 if wdl else 1
         self.v_fc = nn.Sequential(
             nn.Linear(BOARD_SIZE * BOARD_SIZE, v_hidden),
             nn.ReLU(),
-            nn.Linear(v_hidden, 3),  # win, draw, loss logits
+            nn.Linear(v_hidden, v_out),  # 3=WDL logits, 1=scalar
         )
 
         # Policy head — spatial 18×18 logit map (single forward pass for full policy)
@@ -495,9 +497,13 @@ class HexNet(nn.Module):
         return self.v_fc(v)                       # [B, 3]
 
     def value(self, features: torch.Tensor) -> torch.Tensor:
-        """Scalar value in [-1, 1]: P(win) - P(loss)."""
-        wdl = F.softmax(self.value_wdl(features), dim=-1)
-        return wdl[:, 0] - wdl[:, 2]             # [B]
+        """Scalar value in [-1, 1]: P(win) - P(loss) for WDL, tanh for scalar."""
+        if self.wdl:
+            wdl = F.softmax(self.value_wdl(features), dim=-1)
+            return wdl[:, 0] - wdl[:, 2]         # [B]
+        else:
+            v = self.v_conv(features).flatten(1)
+            return torch.tanh(self.v_fc(v)).squeeze(-1)  # [B]
 
     def variance(self, features: torch.Tensor) -> torch.Tensor:
         """Predicted σ² of value estimate. [B] > 0 via Softplus."""

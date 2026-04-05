@@ -89,10 +89,31 @@ def _discover_models():
 
 
 def _load_checkpoint(path, device=DEVICE):
-    """Load a HexNet checkpoint from a .pt file. Returns (net, label)."""
-    net = HexNet().to(device)
-    state = torch.load(path, map_location=device, weights_only=True)
-    net.load_state_dict(state)
+    """Load a HexNet checkpoint from a .pt file. Returns (net, label).
+    Handles both raw state_dicts and wrapped {'model_state_dict':..., 'config':...} format."""
+    raw = torch.load(path, map_location=device, weights_only=False)
+    # Unwrap if checkpoint has 'model_state_dict' key
+    if isinstance(raw, dict) and "model_state_dict" in raw:
+        state = raw["model_state_dict"]
+        cfg = raw.get("config", {})
+    else:
+        state = raw
+        cfg = {}
+    # Detect architecture from state dict keys
+    block_indices = [int(k.split(".")[1]) for k in state if k.startswith("blocks.")]
+    n_blocks = max(block_indices) + 1 if block_indices else 6
+    ch_key = next((k for k in state if k == "blocks.0.conv1.weight"), None)
+    n_channels = state[ch_key].shape[0] if ch_key else 128
+    # Use config from checkpoint if available
+    n_blocks = cfg.get("TRUNK_BLOCKS", n_blocks)
+    n_channels = cfg.get("TRUNK_CHANNELS", n_channels)
+    # Detect scalar vs WDL value head from final FC output size
+    vfc_key = next((k for k in state if "v_fc" in k and "weight" in k
+                    and state[k].dim() == 2 and state[k].shape[0] <= 3), None)
+    is_wdl = state[vfc_key].shape[0] == 3 if vfc_key else True
+    # Build net with detected architecture (pass directly, not via CFG)
+    net = HexNet(hidden=n_channels, n_blocks=n_blocks, wdl=is_wdl).to(device)
+    net.load_state_dict(state, strict=False)
     net.eval()
     label = Path(path).stem
     return net, label

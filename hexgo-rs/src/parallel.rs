@@ -115,7 +115,7 @@ pub fn parallel_eisenstein_games(
 }
 
 /// Eisenstein greedy move selection — pure Rust, no Python.
-fn eisenstein_choose(game: &HexGame, defensive: bool) -> Coord {
+pub fn eisenstein_choose(game: &HexGame, defensive: bool) -> Coord {
     let player = game.current_player;
     let opponent = 3 - player;
     let candidates = game.candidates_ref();
@@ -149,7 +149,7 @@ fn eisenstein_choose(game: &HexGame, defensive: bool) -> Coord {
 }
 
 /// Longest chain `player` would have along any axis if placed at (q, r).
-fn chain_if_placed(game: &HexGame, q: i16, r: i16, player: Player) -> u32 {
+pub fn chain_if_placed(game: &HexGame, q: i16, r: i16, player: Player) -> u32 {
     let board = game.board_ref();
     let mut best: u32 = 1;
     for &(dq, dr) in &AXES {

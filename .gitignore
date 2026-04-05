@@ -41,3 +41,12 @@ Thumbs.db
 train.log
 train.lock
 train_stdout.log
+
+# Archive
+_archive/
+
+# Runtime artifacts
+elo.json
+metrics.jsonl
+autoresearch/trial_*.log
+ext/

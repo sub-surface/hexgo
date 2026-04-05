@@ -1,1 +1,7 @@
 timestamp	experiment_id	description	hypothesis	loss_before	loss_after	elo_before	elo_after	decisive_ratio	kept	reason	git_hash
+2026-04-03T18:23	EXP-01	steady cosine decay (no warm restarts)	warm restart LR spikes destabilize net	v=0.432	v=0.439	eis=0/24,mm=2/24	eis=0/24,mm=0/24	1.0	no	MM regressed, v worse, T_max bug	18fc858
+2026-04-03T18:56	EXP-02	exponential decay buffer sampling	smooth recency weighting improves value gradient	v=0.432	v=0.427	eis=0/24	eis=3/6	1.0	yes	v improved, eis wins 0->3	e6a4442
+2026-04-03T19:32	EXP-03	EMA weights for self-play (decay=0.995)	smoother policy reduces value target noise	v=0.427	v=0.427	eis=3/6	eis=0/6	1.0	no	eis regressed 3->0, no v improvement	f10a8cc
+2026-04-03T19:51	EXP-04	CPUCT 2.0 -> 3.0	more exploration -> diverse self-play positions	v=0.427	v=0.428	eis=3/6	eis=0/6	1.0	no	eis regressed 3->0, exploration diluted signal	8cfee14
+2026-04-03T20:13	EXP-05	VALUE_LOSS_WEIGHT 1.0 -> 2.0	more gradient to value head breaks plateau	v=0.427	v=0.427	eis=3/6	eval_crash	1.0	no	v flat, eval crashed (NetAgent params), no improvement	c43927d
+2026-04-03T20:42	EXP-06	TOP_K curriculum 48->24 over 10 gens	wider exploration -> diverse positions	v=0.427	v=0.422	eis=?	eis=0/24	1.0	no	v slightly better but p regressed +0.085, eis=0/24	c3055ab

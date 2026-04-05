@@ -109,7 +109,7 @@ class NetAgent:
 
     def choose_move(self, game: HexGame) -> tuple[int, int]:
         from mcts import mcts_with_net
-        return mcts_with_net(game, self.net, self.sims)
+        return mcts_with_net(game, self.net, self.sims, move_temp=0.1)
 
 
 # ── ELO tracker ───────────────────────────────────────────────────────────────
@@ -189,7 +189,8 @@ def play_game(agent1: Agent, agent2: Agent, max_moves: int = 300) -> dict:
     elif game.winner == 2:
         winner_name = agent2.name
 
-    return {"winner_name": winner_name, "moves": move_count, "duration": dur}
+    return {"winner_name": winner_name, "moves": move_count, "duration": dur,
+            "move_history": list(game.move_history)}
 
 
 def run_match(agent_a: Agent, agent_b: Agent, n_games: int = 10,
@@ -201,6 +202,7 @@ def run_match(agent_a: Agent, agent_b: Agent, n_games: int = 10,
     if elo is None:
         elo = ELO()
     wins = {agent_a.name: 0, agent_b.name: 0, None: 0}
+    games = []
 
     for i in range(n_games):
         # Alternate who plays X
@@ -212,6 +214,7 @@ def run_match(agent_a: Agent, agent_b: Agent, n_games: int = 10,
         result = play_game(p1, p2)
         wn = result["winner_name"]
         wins[wn] += 1
+        games.append(result)
         elo.record(agent_a.name, agent_b.name, wn, result["moves"], result["duration"])
 
         if verbose:
@@ -225,6 +228,7 @@ def run_match(agent_a: Agent, agent_b: Agent, n_games: int = 10,
         f"wins_{agent_b.name}": wins[agent_b.name],
         "draws": wins[None],
         "ratings": elo.leaderboard(),
+        "games": games,
     }
 
 

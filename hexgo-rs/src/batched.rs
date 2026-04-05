@@ -11,7 +11,9 @@ use rand_distr::{Distribution, Gamma};
 
 use crate::encode::*;
 use crate::game::HexGame;
+use crate::minimax;
 use crate::node::*;
+use crate::parallel::eisenstein_choose;
 use crate::types::*;
 
 // ── Return types ─────────────────────────────────────────────────────────────
@@ -47,6 +49,13 @@ pub struct GameTrainingResult {
 
 // ── Per-game state during self-play ──────────────────────────────────────────
 
+/// Which opponent bot to use (if any).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OpponentKind {
+    Eisenstein,
+    Minimax,
+}
+
 struct GameState {
     game: HexGame,
     arena: Arena,
@@ -56,6 +65,12 @@ struct GameState {
     root_origin: (i16, i16),
     root_value_est: f32,
     active: bool,
+    /// Which player the opponent controls (None = pure self-play).
+    opponent_player: Option<u8>,
+    /// Which bot this opponent game uses.
+    opponent_kind: Option<OpponentKind>,
+    /// Pair cache for MinimaxBot (persists across moves within a turn).
+    minimax_pair_cache: Option<minimax::PairCache>,
 }
 
 // ── Helper: Dirichlet sample ─────────────────────────────────────────────────
@@ -108,7 +123,8 @@ fn call_batch_eval<'py>(
                     c_puct=2.0, fpu_reduction=0.2,
                     dirichlet_alpha=0.10, dirichlet_eps=0.25,
                     temp_horizon=40, random_opening=6, random_opening_frac=0.5,
-                    zoi_margin=0, zoi_lookback=16))]
+                    zoi_margin=0, zoi_lookback=16,
+                    n_opponent_games=0, minimax_pattern_path=""))]
 pub fn batched_self_play(
     py: Python<'_>,
     eval_fn: &Bound<'_, PyAny>,
@@ -125,26 +141,81 @@ pub fn batched_self_play(
     random_opening_frac: f64,
     zoi_margin: i16,
     zoi_lookback: usize,
+    n_opponent_games: usize,
+    minimax_pattern_path: &str,
 ) -> PyResult<Vec<GameTrainingResult>> {
-    let mut states: Vec<GameState> = (0..n_games)
-        .map(|_| GameState {
-            game: HexGame::new(),
-            arena: Arena::with_capacity(sims as usize * 24),
-            root: NULL_NODE,
-            move_count: 0,
-            positions: Vec::new(),
-            root_origin: (0, 0),
-            root_value_est: 0.0,
-            active: true,
+    // Load minimax pattern values if path is given
+    let minimax_pat: Option<[f64; 729]> = if !minimax_pattern_path.is_empty() {
+        match minimax::load_pattern_values_from_file(minimax_pattern_path) {
+            Ok(pv) => Some(pv),
+            Err(e) => {
+                eprintln!("[batched] WARNING: failed to load minimax patterns from '{}': {}", minimax_pattern_path, e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let total_games = n_games + n_opponent_games;
+    let mut rng = thread_rng();
+
+    let mut states: Vec<GameState> = (0..total_games)
+        .map(|idx| {
+            // First n_games are pure self-play
+            if idx < n_games {
+                return GameState {
+                    game: HexGame::new(),
+                    arena: Arena::with_capacity(sims as usize * 24),
+                    root: NULL_NODE,
+                    move_count: 0,
+                    positions: Vec::new(),
+                    root_origin: (0, 0),
+                    root_value_est: 0.0,
+                    active: true,
+                    opponent_player: None,
+                    opponent_kind: None,
+                    minimax_pair_cache: None,
+                };
+            }
+
+            // Opponent games: alternate which side the opponent plays
+            let opp_idx = idx - n_games;
+            let opp_side = if opp_idx % 2 == 0 { P1 } else { P2 };
+
+            // If we have minimax patterns, split: first half Eisenstein, second half Minimax
+            let kind = if minimax_pat.is_some() && opp_idx >= n_opponent_games / 2 {
+                OpponentKind::Minimax
+            } else {
+                OpponentKind::Eisenstein
+            };
+
+            GameState {
+                game: HexGame::new(),
+                arena: Arena::with_capacity(sims as usize * 24),
+                root: NULL_NODE,
+                move_count: 0,
+                positions: Vec::new(),
+                root_origin: (0, 0),
+                root_value_est: 0.0,
+                active: true,
+                opponent_player: Some(opp_side),
+                opponent_kind: Some(kind),
+                minimax_pair_cache: None,
+            }
         })
         .collect();
 
-    let mut rng = thread_rng();
-
-    // ── Phase 0: Random openings ─────────────────────────────────────────
+    // ── Phase 0: Random openings (self-play games only) ────────────────
     if random_opening > 0 {
-        let opening_games: Vec<bool> = (0..n_games)
-            .map(|_| rng.gen::<f64>() < random_opening_frac)
+        let opening_games: Vec<bool> = (0..total_games)
+            .map(|i| {
+                // Only self-play games get random openings
+                if states[i].opponent_player.is_some() {
+                    return false;
+                }
+                rng.gen::<f64>() < random_opening_frac
+            })
             .collect();
 
         for _step in 0..random_opening {
@@ -169,7 +240,7 @@ pub fn batched_self_play(
 
     // ── Main move loop ───────────────────────────────────────────────────
     loop {
-        let active_indices: Vec<usize> = (0..n_games)
+        let active_indices: Vec<usize> = (0..total_games)
             .filter(|&i| states[i].active)
             .collect();
         if active_indices.is_empty() {
@@ -488,9 +559,9 @@ pub fn batched_self_play(
                 picked
             };
 
-            let chosen_move = child_visits[chosen_idx].0;
+            let net_chosen_move = child_visits[chosen_idx].0;
 
-            // Build policy target and legal mask
+            // Build policy target and legal mask (from MCTS visit distribution)
             let (oq, or_) = state.root_origin;
             let mut policy_target = vec![0.0f32; PLANE];
             let mut legal_mask = vec![0.0f32; PLANE];
@@ -512,7 +583,7 @@ pub fn batched_self_play(
             }
 
             // Record position data — use stored root encoding
-            let root_setup_idx = still_active.iter().position(|&x| x == i);
+            let _root_setup_idx = still_active.iter().position(|&x| x == i);
             state.positions.push(PositionData {
                 board: root_encodings
                     .get(
@@ -530,8 +601,46 @@ pub fn batched_self_play(
                 value_est: state.root_value_est,
             });
 
+            // Determine the actual move to play:
+            // For opponent games where it's the opponent's turn, override with bot move.
+            let is_opponent_turn = state.opponent_player == Some(state.game.current_player);
+            let actual_move = if is_opponent_turn {
+                match state.opponent_kind {
+                    Some(OpponentKind::Eisenstein) => {
+                        // Eisenstein with 30% random noise
+                        if rng.gen::<f32>() < 0.3 {
+                            let moves = state.game.legal_moves();
+                            if moves.is_empty() {
+                                net_chosen_move
+                            } else {
+                                moves[rng.gen_range(0..moves.len())]
+                            }
+                        } else {
+                            eisenstein_choose(&state.game, true)
+                        }
+                    }
+                    Some(OpponentKind::Minimax) => {
+                        if let Some(ref pat) = minimax_pat {
+                            minimax::minimax_choose_move(
+                                &state.game,
+                                pat,
+                                50, // 50ms time limit
+                                &mut rng,
+                                &mut state.minimax_pair_cache,
+                            )
+                        } else {
+                            // Fallback to Eisenstein if patterns failed to load
+                            eisenstein_choose(&state.game, true)
+                        }
+                    }
+                    None => net_chosen_move,
+                }
+            } else {
+                net_chosen_move
+            };
+
             // Apply chosen move
-            state.game.make_move(chosen_move.0, chosen_move.1);
+            state.game.make_move(actual_move.0, actual_move.1);
             state.move_count += 1;
 
             if state.game.winner_raw() != NO_PLAYER || state.move_count >= max_moves {
